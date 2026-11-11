@@ -1,6 +1,117 @@
 # Bring-up notes
 
 Dated log of what was tried and where each run stopped. Newest first.
+## 2026-11-12 — EU1: European copies as a beta (issue #3): every title address found in the EBOOT by pattern; issues #4 and #5
+EBOOT: BCUS98125 update 1.04 (and the disc EBOOT 1.00) | tools/if2_resolve.py, tools/if2_items.py, config/if2_sigs.json,
+config/if2_contdb.json, tests/test_if2_resolve.py, tests/if2_resolved_test.h, src/if2_version.h and every title source,
+tools/relift.sh, tools/ppu_postlift.py, tools/extract_policy_modules.py, tools/check_inputs.py, tools/run.ps1,
+tools/build.ps1, CMakeLists.txt, launcher (v0.1.6), README.md, game/README.md
+- **Asked:** issue #3's player has BCES01143 with update 1.04 (PARAM.SFO disc 01.01, app 01.00; decrypted "update" EBOOT
+  SHA-1 4bfff469..., 10,159,776 bytes; libsre 41e3e15a..., another firmware) and failed at extract_policy_modules
+  ("Wws_Job module: the bytes at 0x008E5B00 are not the known module"). Nobody here has that disc: make it a beta that
+  works from the player's EBOOT itself and diagnoses from their log.
+- **Finding first:** 10,159,776 bytes is exactly the US *disc* EBOOT's size (1.04's is 10,605,256), and the game picks
+  its edition at run time from TITLE_ID (one EBOOT for every region). So the player's "update EBOOT" is very likely a
+  disc-layout build (the EU disc EBOOT, decrypted from the update folder by mistake, or the disc's own); the step that
+  failed looked for 1.04's module address because PARAM.SFO said 01.04. check_inputs now says which layout an EBOOT's
+  code has, and a disc-layout EBOOT runs as the disc game (no update files mounted: run.ps1 / play mode follow the
+  layout, not APP_VER).
+- **Inventory (tools/if2_items.py, 152 items, each with the US 1.00 / 1.04 values as the cross-check and the features it
+  gates):** the TOC; display W/H, safe X, render W and the four pool slots of W (aspect); the four LOD constants (lod) and
+  1.04's dynamic-quality table, rows 12..20 (lod_quality); the clock object, loop counter and the 1/15 / 1/30 dt clamps
+  (clocklog, dtclamp); SetNodeState, WarpToCheckpoint, the task graph, its index, the warp manager, warp lock, restart
+  flag and the main loop's return address (taskjump); the signal-name table and the dispatcher (signals); the FMV quad
+  function, its bl and callee (fmv_fit); the physics step, its fallback bl/callee, the mesh generator and its LR save
+  (physfb); the language-list table and its US / EU lists (language_edition); the 25 WAIT_EVENTS addresses (5 sites,
+  their callers, the Edge kicker's r2 displacement, row reads, the light kicker's poll table); the Wws_Job policy module;
+  the native menu's 26 functions, 2 import stubs, 8 globals / vtables (menu, 1.04 only); 42 MENU_TRACE natives
+  (diagnostics). Also keyed by US values before, now handled: KNOWN_EBOOTS gating (check_inputs, launcher), the
+  ppu_postlift tables (built from the resolved items; on the US builds they must equal HOOKS / HOOKS_V104), the
+  save-state continuation lists (config/ss_cont_list*.txt: kept for the US builds; another EBOOT gets both lists carried
+  over function by function, analysis/ss_cont_list.resolved.txt), IF2_EBOOT_V104 (now the layout the resolver saw),
+  the save-state title id / disc_ver and the checkpoint save directory (IF2_TITLE_ID). Not EBOOT-keyed, left as they
+  are: the shader hashes (disc data), menu symbol ids (script data, checked at run time), libsre's SPU kernel LS
+  addresses and ss_cont_list_libsre.txt (firmware: a player's other libsre may lose save-state resume points in libsre
+  frames), the Bink image's continuation LS addresses (by image). The toolkit patch has no title addresses.
+- **The resolver (tools/if2_resolve.py, standard library):** a pattern = up to 6 windows of 8 instructions around an
+  anchor, normalised two ways -- loose (every load/store/addi displacement, lis/ori immediates, branch displacements
+  masked) and tight (only what is address-like: r2-relative, and bases set by lis or loaded from r2 / another such base
+  since the last blr) -- each window kept as its blake2b hash + its rarest normalised word (no game code in the repo;
+  the Wws_Job module is found by the hash of its first 64 bytes + SHA-1). Windows vote for the anchor (tolerance 0x100);
+  >= 2 must agree, a second place with as many is "ambiguous"; the anchor's own 5 words then confirm it (an insertion
+  between window and anchor: searched within 8 instructions, never further). Values are decoded from THIS EBOOT: the
+  address itself, the effective address of the access (its base traced back through the function: r2, a pool pointer
+  loaded from the TOC, lis/addi/ori, mr; epilogue restores skipped; a piece find_functions split off a large frame's
+  prologue counts as its function), the word it loads, a bl target, a table found by its strings (signal names), the
+  import table (lwmutex stubs). Data items without a reader of their own: rel (1/30 = 1/15 + 8, stock value checked;
+  the quality rows) or deref (the lang lists). Patterns are derived from both US builds (`derive`), validated by
+  matching on the reference; functions too small to single out are found through their callers. Output:
+  generated/if2_resolved.h (IF2_R/IF2_OK/IF2_F per item, IF2_HAVE per feature, the trace X-lists), analysis/resolve.json,
+  analysis/resolve_report.txt (every item: found / ambiguous / missing, by which pattern and where). It runs in the lift
+  step right after find_functions (the report lands in the launcher's log); on a US EBOOT any difference from
+  if2_items stops the lift, and items a US build was never mapped for stay off there ("n/a": 1.00's code has most of
+  the native menu's functions, found by the 1.04 patterns -- never tried, so off as before).
+- **Results.** US 1.04: 152/152 found, every value the old constant (MENU_TRACE's SET_TEXT_COLOR(list) included, from
+  a one-window pattern); US 1.00: the 64 items it has, all equal, 88 n/a. Cross-build honesty check (patterns of one
+  build only, on the other): 1.04's on 1.00: 58 right, 0 wrong, 6 missing (lod_3, the mesh generator and its LR save --
+  its frame grew --, the language table and its two lists: code that changed); 1.00's on 1.04: 57 right, 0 wrong,
+  5 missing, 1 ambiguous. tests/test_if2_resolve.py on both: every pattern window unique; SHIFTED copy (padding at five
+  function boundaries, 0x80..0x4000 bytes, data segment +0x20000, branches / descriptors / pointers / lis pairs
+  rewritten): 150 of 152 items moved, all found at the new addresses (1.00: 63 of 64 moved, all found); CHANGED copy
+  (two windows of every item get one instruction changed, 108 / 78 instructions): all found. The check-step probe on
+  those copies: 61 of 64 core items (the 64 both builds have) without the lift's function list, 0 ambiguous.
+- **Runtime safety:** every feature checks IF2_HAVE and, when off, says once `[if2] <feature>: off -- not found in this
+  EBOOT (...): the game's own behaviour`; the one-line summary `[if2] EBOOT <name> (SHA-1, title, cross-checked | BETA);
+  off on this EBOOT: ...` opens every log. The waitev sites keep their code-word checks (now relative to the found
+  sites), aspect / LOD / language keep their stock-value checks. Test: a build with a header where nothing was found
+  (every item 0, every feature off, title BCES01143) booted @new to READY by frame count (signals off), all eight
+  features logged off, no FATAL / WATCHDOG. Title sources compile with no error and no warning against the 1.04, 1.00,
+  nothing-found and UK headers (clang-cl -fsyntax-only, the build's flags).
+- **Wws_Job module:** the lifter needs no exact bytes (lift_policy lifts what is there; the runtime keys a module by
+  its first 16 bytes): the known module anywhere in the EBOOT (128-aligned, by hash + SHA-1), else where its
+  registering code says (a pattern), accepted only when well-formed (aligned, 0x2E80 bytes, >= 97% SPU-shaped words)
+  and reported as "not the known bytes". Without it, extract_policy_modules says the module is interpreted and goes on
+  for a non-US EBOOT (the US ones still stop).
+- **Editions:** check_inputs: BCES01143 / BCES01144 are beta; an EBOOT not known by SHA-1 passes only when the probe
+  finds >= 75% of the core items with none ambiguous (prints the probe), and warns when an update folder's EBOOT has a
+  disc layout; 4bfff469... is named "Europe, beta"; every other unknown EBOOT still stops (IF2_ALLOW_UNKNOWN_EBOOT=1 as
+  before). With a European disc the language row is the European list and there is no Language edition row (UK: British
+  English, hidden). Tried with scratch fake SFO / EBOOTs (the shifted copies under BCES01143 / BCES01144, a BCAS20181,
+  a non-EBOOT, a 1.00-sized one): check_inputs ok / ok / stop / stop / ok + layout warning; the launcher's
+  --detect-out [ok] / [!] / [x] the same.
+- **Diagnostics:** the launcher's Save report writes logs\eu-report-<date>.txt (report-<date> for US copies;
+  --report-out for tests): disc / update SFO, EBOOT path, size, SHA-1, libsre SHA-1, inputs.json (the probe included),
+  resolve_report.txt, the steps' state, the newest launcher log's last 80 lines and the first game log's first 60 / last
+  120 (UTF-16 read), with %USERPROFILE%, %USERNAME% and %COMPUTERNAME% in place of the user folder (also in / and
+  JSON-escaped spellings), user name and machine name. Checked on a scratch install: 0 occurrences of the user name.
+- **Issue #4:** the libsre firmware note is `[ok] libsre.prx: decrypted (firmware build differs from the tested one: this
+  is fine, it does not stop the build)` in the launcher and check_inputs. A failed step's dialog and status line now say
+  `Step N of 7 (id: title) failed: <its first error line>` -- from that step's own output only, [ok] / [i] / [!] lines
+  never taken; the log says the same.
+- **Issue #5 (with v0.1.5's build.ps1 reconfigure):** the launcher's file identity is relative to the folder, so a
+  moved / copied install keeps its fingerprints; check (inputs.json's paths) and build (CMakeCache's home) run again
+  when their output names another folder (Pipeline.MovedFrom, plus root.<step> in state.ini), without re-running the
+  steps between. Tried: the repo copied to scratch A (built there: "the folder moved: configuring the build directory
+  again", 2 min), --mark-built, A copied to `...\mv B\a deeper folder\inFamous Copy` (144 characters): --detect-out says
+  check and build to run ("its output names another folder"), the rest up to date; check + build in B as the
+  launcher runs them: "the folder moved: configuring the build directory again", CMakeCache's home = B, built in 2 min,
+  and the exe booted @new to READY from B (VFS root and libsre from B). The scratch junctions were removed with rmdir.
+  Not run: the launcher's GUI itself in B (its decisions were checked through --detect-out; --mark-built is a new
+  test switch that records a build as the launcher would).
+- **v0.1.4 vs this, US 1.04, default settings, @new to READY + 900 frames (PLAY_ISSUES=0, scratch options.ini):** the same
+  [if2*] / [menu] / [checkpoint] / [options] / [cellSysutil] lines apart from frame-count noise (READY 2520 / 2525) and
+  the new [if2] EBOOT line; 0 FATAL / WATCHDOG / null-read in both. ppu_postlift inserted the same 7 calls; the lift used
+  the same ss_cont_list.104.txt.
+- **Tests:** test_if2_resolve PASS on 1.04 and 1.00; test_if2_taskgraph passed; test_if2_checkpoint compiles, but its
+  link fails with the same 10 undefined symbols at v0.1.4 (pi_signal, g_ftr_*, ...: it predates the play-issues code;
+  not this change); test_sysutil_lang 83 checks 0 failed; test_savedata_flow passed; manifest gate 4082 statics,
+  0 unclassified. No toolkit change: the patch is v0.1.5's.
+- **What could still fail on the EU build, and how the report shows it:** a function the EU code changed (a feature
+  `off`, its items `missing` with "best k/6 windows"); two look-alike places (`ambiguous` with both addresses); a
+  1.00-layout EBOOT gets no menu entries or quality rows (1.04 only) and the check step's layout warning; the policy
+  module not the known bytes (`[!] ... not the known one (SHA-1 ...)`); save states that park in code the continuation
+  lists did not carry (the resolve report's continuation count); their libsre (another firmware) in save-state resume.
+
 ## 2026-11-12 — Language edition: Europe (opt-in, issue #1: Russian), and a non-US copy refused at the file check (issue #3)
 EBOOT: BCUS98125 update 1.04 | src/infamous2_hooks.cpp (rows language_edition / language, the table write), config/ss_manifest.txt,
 ps3recomp libs/system/tests/test_sysutil_lang.c, tools/check_inputs.py, tools/extract_policy_modules.py, tools/build.ps1, launcher, README.md

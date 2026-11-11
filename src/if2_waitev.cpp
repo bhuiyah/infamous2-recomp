@@ -52,8 +52,9 @@
  * due -- a clock wait, nothing writes memory to signal it; movies only) and
  * the boot / menu pollers (lr 0x133640, 0xAAD5C).
  *
- * Every site's code is checked against the disc EBOOT (BCUS98125, APP_VER
- * 01.00) before it is registered. WAIT_EVENTS=0 registers nothing (today's
+ * Every site's code is checked (the words every US build has there; the
+ * sites themselves are found in the EBOOT being lifted) before it is
+ * registered. WAIT_EVENTS=0 registers nothing (today's
  * spin).
  */
 
@@ -191,7 +192,7 @@ uint32_t edge_queue(const ppu_context* ctx, uint32_t slot)
 {
     const int32_t b = (int8_t)wev_rd8(slot);
     if (b == -1) return 0;
-    const uint32_t globals = wev_rd32((uint32_t)ctx->gpr[2] - IF2_V(0x7AD0u, 0x7AC8u));   /* 1.04: one TOC slot moved */
+    const uint32_t globals = wev_rd32((uint32_t)ctx->gpr[2] + (uint32_t)IF2_R(WEV_EK_GLOB_DISP));   /* disc -0x7AD0, 1.04 -0x7AC8 */
     return wev_rd32(globals - 0x7FE8u) + (uint32_t)(b * 0x180);
 }
 int edge_row(uint32_t q, uint32_t slot)
@@ -235,46 +236,55 @@ int e_ready(const wev_watch* w)
     return wws_min_lane(base + 0x40u + (o << 4)) >= wws_target(base + 0x40u + (o << 4), base + 0x30u + (o << 2));
 }
 
-/* ---- this EBOOT's code at each site ------------------------------------- */
+/* ---- this EBOOT's code at each site -------------------------------------
+ * The sites, their callers and the instructions checked are found in the EBOOT being lifted
+ * (tools/if2_resolve.py: wev_* items); the checked words are the code every US build has there, relative to
+ * the site (the instruction after the usleep's sc). A site whose items were not all found, or whose code is not
+ * these words, is not registered: that wait polls as the game does. */
 struct code_word { uint32_t ea, word; };
-struct site_def { wev_site site; code_word code[10]; };
+struct site_def { const char* feature; int have; wev_site site; code_word code[10]; };
 
+#define WEV_EA(n) IF2_R(n)
 const site_def kSites[] = {
-    { { "main-kicker", { IF2_EA(0x003374F4u, 0x00350D18u) }, k_arm, k_ready,
-        { IF2_EA(0x001DB7DCu, 0x001EF2A0u), IF2_EA(0x00337554u, 0x00350D78u),
-          IF2_EA(0x00337928u, 0x0035114Cu) } },          /* its callers (the loop makes no call) */
-      { { IF2_EA(0x003374ECu, 0x00350D10u), 0x3960008Du }, { IF2_EA(0x003374F0u, 0x00350D14u), 0x44000002u },
-        { IF2_EA(0x003374F4u, 0x00350D18u), 0x83BF0318u }, { IF2_EA(0x003374F8u, 0x00350D1Cu), 0x2F9D0004u } } },
-    { { "main-wws", { IF2_EA(0x00370634u, 0x0038AA70u), IF2_EA(0x0037065Cu, 0x0038AA98u) }, b1_arm, b1_ready,
-        { IF2_EA(0x00370600u, 0x0038AA3Cu), IF2_EA(0x00370640u, 0x0038AA7Cu),
-          IF2_EA(0x00370668u, 0x0038AAA4u) } },          /* after its func_00505490 calls */
-      { { IF2_EA(0x0037062Cu, 0x0038AA68u), 0x3960008Du }, { IF2_EA(0x00370630u, 0x0038AA6Cu), 0x44000002u },
-        { IF2_EA(0x00370634u, 0x0038AA70u), 0x7FE3FB78u }, { IF2_EA(0x00370654u, 0x0038AA90u), 0x3960008Du },
-        { IF2_EA(0x00370658u, 0x0038AA94u), 0x44000002u }, { IF2_EA(0x0037065Cu, 0x0038AA98u), 0x7FE3FB78u } } },
-    { { "main-wws2", { IF2_EA(0x003710A8u, 0x0038B4E4u), IF2_EA(0x003710D4u, 0x0038B510u) }, b2_arm, b2_ready,
-        { IF2_EA(0x0037108Cu, 0x0038B4C8u), IF2_EA(0x003710B8u, 0x0038B4F4u),
-          IF2_EA(0x003710E4u, 0x0038B520u) } },          /* after its func_00504D90 calls */
-      { { IF2_EA(0x003710A0u, 0x0038B4DCu), 0x3960008Du }, { IF2_EA(0x003710A4u, 0x0038B4E0u), 0x44000002u },
-        { IF2_EA(0x003710A8u, 0x0038B4E4u), 0x7F83E378u }, { IF2_EA(0x003710CCu, 0x0038B508u), 0x3960008Du },
-        { IF2_EA(0x003710D0u, 0x0038B50Cu), 0x44000002u }, { IF2_EA(0x003710D4u, 0x0038B510u), 0x7F83E378u } } },
-    { { "light-kicker", { IF2_EA(0x0033745Cu, 0x00350C80u) }, l_arm, l_ready,
-        { IF2_EA(0x00337430u, 0x00350C54u), IF2_EA(0x00337464u, 0x00350C88u) } },   /* after its func_00337040 calls */
-      { { IF2_EA(0x00337450u, 0x00350C74u), 0x3960008Du }, { IF2_EA(0x00337458u, 0x00350C7Cu), 0x44000002u },
-        { IF2_EA(0x0033745Cu, 0x00350C80u), 0x7FE3FB78u }, { IF2_EA(0x00337464u, 0x00350C88u), 0x801F0318u },
+    { "main-kicker", IF2_HAVE(WEV_MAIN_KICKER),
+      { "main-kicker", { WEV_EA(WEV_MK_SC) }, k_arm, k_ready,
+        { WEV_EA(WEV_MK_C1), WEV_EA(WEV_MK_C2), WEV_EA(WEV_MK_C3) } },          /* its callers (the loop makes no call) */
+      { { WEV_EA(WEV_MK_SC) - 8, 0x3960008Du }, { WEV_EA(WEV_MK_SC) - 4, 0x44000002u },
+        { WEV_EA(WEV_MK_SC), 0x83BF0318u }, { WEV_EA(WEV_MK_SC) + 4, 0x2F9D0004u } } },
+    { "main-wws", IF2_HAVE(WEV_MAIN_WWS),
+      { "main-wws", { WEV_EA(WEV_MW_SC), WEV_EA(WEV_MW_SC2) }, b1_arm, b1_ready,
+        { WEV_EA(WEV_MW_C1), WEV_EA(WEV_MW_C2), WEV_EA(WEV_MW_C3) } },          /* after its func_00505490 calls */
+      { { WEV_EA(WEV_MW_SC) - 8, 0x3960008Du }, { WEV_EA(WEV_MW_SC) - 4, 0x44000002u },
+        { WEV_EA(WEV_MW_SC), 0x7FE3FB78u }, { WEV_EA(WEV_MW_SC2) - 8, 0x3960008Du },
+        { WEV_EA(WEV_MW_SC2) - 4, 0x44000002u }, { WEV_EA(WEV_MW_SC2), 0x7FE3FB78u } } },
+    { "main-wws2", IF2_HAVE(WEV_MAIN_WWS2),
+      { "main-wws2", { WEV_EA(WEV_M2_SC), WEV_EA(WEV_M2_SC2) }, b2_arm, b2_ready,
+        { WEV_EA(WEV_M2_C1), WEV_EA(WEV_M2_C2), WEV_EA(WEV_M2_C3) } },          /* after its func_00504D90 calls */
+      { { WEV_EA(WEV_M2_SC) - 8, 0x3960008Du }, { WEV_EA(WEV_M2_SC) - 4, 0x44000002u },
+        { WEV_EA(WEV_M2_SC), 0x7F83E378u }, { WEV_EA(WEV_M2_SC2) - 8, 0x3960008Du },
+        { WEV_EA(WEV_M2_SC2) - 4, 0x44000002u }, { WEV_EA(WEV_M2_SC2), 0x7F83E378u } } },
+    { "light-kicker", IF2_HAVE(WEV_LIGHT_KICKER),
+      { "light-kicker", { WEV_EA(WEV_LK_SC) }, l_arm, l_ready,
+        { WEV_EA(WEV_LK_C1), WEV_EA(WEV_LK_C2) } },   /* after its func_00337040 calls */
+      { { WEV_EA(WEV_LK_SC) - 0xC, 0x3960008Du }, { WEV_EA(WEV_LK_SC) - 4, 0x44000002u },
+        { WEV_EA(WEV_LK_SC), 0x7FE3FB78u }, { WEV_EA(WEV_LK_SC) + 8, 0x801F0318u },
         /* the kicker's poll periods per state: 900 / 100 / 100 / 500 us */
-        { IF2_EA(0x006F2360u, 0x0074A8B0u), 0x00000384u }, { IF2_EA(0x006F2364u, 0x0074A8B4u), 0x00000064u },
-        { IF2_EA(0x006F2368u, 0x0074A8B8u), 0x00000064u }, { IF2_EA(0x006F236Cu, 0x0074A8BCu), 0x000001F4u } } },
-    { { "edge-kicker", { IF2_EA(0x00338D08u, 0x0035252Cu) }, e_arm, e_ready,
-        { IF2_EA(0x00338CE8u, 0x0035250Cu), IF2_EA(0x00338D10u, 0x00352534u) } },   /* after its func_00338AC4 calls */
-      { { IF2_EA(0x00338D00u, 0x00352524u), 0x3960008Du }, { IF2_EA(0x00338D04u, 0x00352528u), 0x44000002u },
-        { IF2_EA(0x00338D08u, 0x0035252Cu), 0x7FE3FB78u }, { IF2_EA(0x00338D10u, 0x00352534u), 0x801F06A0u },
-        { IF2_EA(0x00338D20u, 0x00352544u), 0x386001F4u },                          /* usleep(500) */
-        /* func_00338AC4: globals = *(r2-0x7AD0; 1.04: -0x7AC8), queues at *(globals-0x7FE8), slot 0x6A4 */
-        { IF2_EA(0x00338AECu, 0x00352310u), IF2_V(0x83C28530u, 0x83C28538u) },
-        { IF2_EA(0x00338B5Cu, 0x00352380u), 0x3BBC06A4u }, { IF2_EA(0x00338B78u, 0x0035239Cu), 0x813E8018u },
+        { WEV_EA(WEV_LK_PERIODS), 0x00000384u }, { WEV_EA(WEV_LK_PERIODS) + 4, 0x00000064u },
+        { WEV_EA(WEV_LK_PERIODS) + 8, 0x00000064u }, { WEV_EA(WEV_LK_PERIODS) + 0xC, 0x000001F4u } } },
+    { "edge-kicker", IF2_HAVE(WEV_EDGE_KICKER),
+      { "edge-kicker", { WEV_EA(WEV_EK_SC) }, e_arm, e_ready,
+        { WEV_EA(WEV_EK_C1), WEV_EA(WEV_EK_C2) } },   /* after its func_00338AC4 calls */
+      { { WEV_EA(WEV_EK_SC) - 8, 0x3960008Du }, { WEV_EA(WEV_EK_SC) - 4, 0x44000002u },
+        { WEV_EA(WEV_EK_SC), 0x7FE3FB78u }, { WEV_EA(WEV_EK_SC) + 8, 0x801F06A0u },
+        { WEV_EA(WEV_EK_SC) + 0x18, 0x386001F4u },                          /* usleep(500) */
+        /* func_00338AC4: globals = *(r2 + d) (disc d = -0x7AD0, 1.04 -0x7AC8), queues at *(globals-0x7FE8),
+         * slot 0x6A4 */
+        { WEV_EA(WEV_EK_GLOB), 0x83C20000u | ((uint32_t)IF2_R(WEV_EK_GLOB_DISP) & 0xFFFFu) },
+        { WEV_EA(WEV_EK_GLOB) + 0x70, 0x3BBC06A4u }, { WEV_EA(WEV_EK_GLOB) + 0x8C, 0x813E8018u },
         /* func_003707BC / func_003710F8: the row ids at q+0xB8 / q+0xD4 */
-        { IF2_EA(0x003707D4u, 0x0038AC10u), 0x880B00B8u }, { IF2_EA(0x00371138u, 0x0038B574u), 0x881F00D4u } } },
+        { WEV_EA(WEV_EK_ROW0), 0x880B00B8u }, { WEV_EA(WEV_EK_ROW1), 0x881F00D4u } } },
 };
+#undef WEV_EA
 
 } /* namespace */
 
@@ -286,6 +296,12 @@ extern "C" int if2_waitev_install(void)
     if (e && *e == '0') return 0;
     int on = 0;
     for (const site_def& d : kSites) {
+        if (!d.have) {
+            char what[64];
+            snprintf(what, sizeof what, "WAIT_EVENTS site %s", d.feature);
+            if2_feature_off(what, "its wait loop or callers");
+            continue;
+        }
         bool ok = true;
         for (const code_word& c : d.code)
             if (c.ea && wev_rd32(c.ea) != c.word) {

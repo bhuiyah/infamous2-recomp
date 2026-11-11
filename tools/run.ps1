@@ -69,7 +69,13 @@ foreach ($v in $scoped) { $saved[$v] = [Environment]::GetEnvironmentVariable($v,
 $env:PS3_VFS_ROOT  = (Resolve-Path game\disc).Path
 # game\hdd0 holds the title update (and the HDD install beside it): only a build lifted from the update
 # runs with it -- the disc EBOOT never runs with an update installed (tools\build.ps1 -Disc).
-if ((Test-Path game\hdd0) -and $inputs.update_app_ver) { $env:PS3_HDD0_ROOT = (Resolve-Path game\hdd0).Path }
+# Which one it is: the layout tools\if2_resolve.py saw (analysis\resolve.json, family 104 = the update's code; an
+# EBOOT taken from the update folder whose code is a disc build's runs without it, like build-v100's).
+$useHdd0 = [bool]$inputs.update_app_ver
+if (Test-Path analysis\resolve.json) {
+    try { $useHdd0 = ((Get-Content analysis\resolve.json -Raw | ConvertFrom-Json).family -eq 104) } catch { }
+}
+if ((Test-Path game\hdd0) -and $useHdd0) { $env:PS3_HDD0_ROOT = (Resolve-Path game\hdd0).Path }
 $env:PS3_TITLE     = "inFamous 2 (ps3recomp)"
 # The runtime halts an SPU after 256 identical DMAs in a row ("wedged"). WWS
 # jobs here legitimately poll the SPU Light Task Kicker object (0xA25800) by

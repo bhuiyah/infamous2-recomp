@@ -152,25 +152,25 @@ extern "C" uint32_t g_sys_mem_bump_ptr;                         /* runtime/sysca
 extern "C" PPU_THREAD_LOCAL ppu_context* g_active_ctx;          /* runtime/ppu/ppu_loader.cpp */
 extern "C" PPU_THREAD_LOCAL void (*g_trampoline_fn)(void*);     /* lifted tail calls */
 extern "C" void if2_checkpoint_taskjump_mark(void);             /* src/if2_checkpoint.cpp */
-void IF2_FN(func_0037A2E8, func_00394CC8)(ppu_context* ctx);                           /* SetNodeState (generated/ppu) */
-void IF2_FN(func_00378EA0, func_003933A8)(ppu_context* ctx);                           /* TaskGraph::WarpToCheckpoint */
+void IF2_F(FN_SET_NODE_STATE)(ppu_context* ctx);       /* SetNodeState (generated/ppu; disc 0x37A2E8) */
+void IF2_F(FN_WARP_TO_CHECKPOINT)(ppu_context* ctx);   /* TaskGraph::WarpToCheckpoint (disc 0x378EA0) */
 
 extern "C" int if2_taskgraph_install(void);
 extern "C" int if2_taskjump_status(char* what, size_t cap);
 
 namespace {
 
-constexpr uint32_t kTg          = IF2_EA(0x00A94E10, 0x00B03210);   /* task graph object */
+constexpr uint32_t kTg          = IF2_R(TG);              /* task graph object (disc 0xA94E10) */
 constexpr uint32_t kTgNodes     = kTg + 0x08;   /* -> node* [count] */
 constexpr uint32_t kTgCount     = kTg + 0x0C;   /* s16 */
 constexpr uint32_t kTgMission   = kTg + 0x7C;   /* -> current mission object */
-constexpr uint32_t kTgIndex     = IF2_EA(0x00A94E00, 0x00B03200);   /* -> u16 index table */
-constexpr uint32_t kWarpMgr     = IF2_EA(0x00A26C80, 0x00A94E80);   /* the world warp manager */
+constexpr uint32_t kTgIndex     = IF2_R(TG_INDEX);        /* -> u16 index table (disc 0xA94E00) */
+constexpr uint32_t kWarpMgr     = IF2_R(WARP_MGR);        /* the world warp manager (disc 0xA26C80) */
 constexpr uint32_t kWarpBusy    = kWarpMgr + 0x40;
-constexpr uint32_t kWarpLock    = IF2_EA(0x00A32EB0, 0x00AA1290);   /* u8: while set, 0x36BA08 refuses warps without ResurrectLock (0x08) */
-constexpr uint32_t kRestartFlag = IF2_EA(0x00A08F1D, 0x00A76EDD);   /* u8: restart the missions at the next world start */
-constexpr uint32_t kToc         = IF2_EA(0x00973528, 0x009DB730);   /* the EBOOT's TOC (every lifted r2 load) */
-constexpr uint32_t kMainLoopRet = IF2_EA(0x001DB824, 0x001EF2E8);   /* lr of the main loop's call */
+constexpr uint32_t kWarpLock    = IF2_R(WARP_LOCK);       /* u8: while set, 0x36BA08 refuses warps without ResurrectLock (0x08) */
+constexpr uint32_t kRestartFlag = IF2_R(RESTART_FLAG);    /* u8: restart the missions at the next world start */
+constexpr uint32_t kToc         = IF2_R(TOC);             /* the EBOOT's TOC (every lifted r2 load) */
+constexpr uint32_t kMainLoopRet = IF2_R(MAIN_LOOP_RET);   /* lr of the main loop's call (disc 0x1DB824) */
 constexpr uint32_t kMsnPrologue = 0x00000459;   /* msn_beast_intro */
 constexpr int      kPrologueAfter = 7;          /* its first step past the title flow */
 /* ReloadWorld | RestartMsn | Wait (its end sends WarpedToCheckpoint). 0x12, the load path's flags
@@ -195,7 +195,7 @@ struct WarpFlagName { uint32_t bit; const char* name; };
 const WarpFlagName kWarpFlagNames[] = {
     { 0x001, "ReloadWorld" }, { 0x002, "RestartMsn" }, { 0x004, "WantLetterbox" }, { 0x008, "ResurrectLock" },
     { 0x010, "Wait" }, { 0x020, "HideScreen" }, { 0x040, "NoFade" },
-#if defined(IF2_EBOOT_V104) && IF2_EBOOT_V104
+#if IF2_EBOOT_V104
     { 0x080, "SuppressText" },
 #endif
     { 0x100, "NoPauseSound" }, { 0x200, "TriggerUgcMode" }, { 0x400, "DevAlwaysQueue" } };
@@ -469,7 +469,7 @@ int warp(ppu_context* ctx, const int* steps, int ns, int tj, int after)
     for (int j = tj; j >= 0 && j >= after - 1; j--) {
         const uint32_t oid = node_oid(node_at(steps[j]));
         const unsigned before = vm_read8(kRestartFlag);
-        const uint64_t r = guest_call(ctx, IF2_FN(func_00378EA0, func_003933A8), kTg,
+        const uint64_t r = guest_call(ctx, IF2_F(FN_WARP_TO_CHECKPOINT), kTg,
                                       (uint64_t)(int64_t)(int32_t)g_jmsn, (uint64_t)(int64_t)(int32_t)oid,
                                       g_wflags, 1, ~0ull);
         const bool took = (uint8_t)r != 0;
@@ -592,7 +592,7 @@ void jump_tick(ppu_context* ctx, int msn, const int* steps, int ns, bool activat
                 if (anc[steps[j]] && node_state(node_at(steps[j])) == 1) { act = steps[j]; aj = j; }
             if (act < 0) break;                     /* nothing to advance yet: next poll */
             const uint32_t an = node_at(act);
-            guest_call(ctx, IF2_FN(func_0037A2E8, func_00394CC8), kTg, an, 3);
+            guest_call(ctx, IF2_F(FN_SET_NODE_STATE), kTg, an, 3);
             g_calls++;
             fprintf(stderr, "[if2-taskjump] %.1fs completed step %d %s (#%d oid %08X): state now %d\n",
                     secs(), aj + 1, step_name(aj, ns), act, node_oid(an), node_state(an));
@@ -739,7 +739,7 @@ void task_tick(ppu_context* ctx, bool can_act)
         g_nodes_ea = nodes; g_nodes_n = count;
         for (int i = 0; i < count; i++) g_state[i] = (int8_t)node_state(node_at(i));
         fprintf(stderr, "[if2-task] %.1fs task graph: %d nodes, table 0x%08X%s\n", secs(), count, nodes,
-                count == IF2_V(968, 986) ? "" : " (not the node count of this EBOOT's graph pack: the layout may differ)");
+                !IF2_EBOOT_KNOWN || count == (IF2_EBOOT_V104 ? 986 : 968) ? "" : " (not the node count of this EBOOT's graph pack: the layout may differ)");
         if (g_tasklog >= 3)
             for (int i = 0; i < count; i++) print_node("[if2-task]   ", i);
     }
@@ -944,6 +944,11 @@ extern "C" int if2_taskgraph_install(void)
     e = getenv("IF2_TASKJUMP_WARP_FLAGS");
     if (e && *e) g_wflags = (uint32_t)strtoul(e, nullptr, 16);
     if (!g_tasklog && !g_jmode) return 0;
+    if (!IF2_HAVE(TASKJUMP)) {
+        if2_feature_off("IF2_TASKJUMP / IF2_TASKLOG", "the task graph, its warp manager or the main loop's call");
+        g_tasklog = 0; g_jmode = 0;
+        return 0;
+    }
     g_t0 = std::chrono::steady_clock::now();
     if (g_jmode >= 2) set_status(1, "waiting for the first main-loop poll");
     /* A jump fabricates progress, and the title autosaves it (any mission after

@@ -467,7 +467,7 @@ SaveOp save_op_since(uint32_t before)
 
 /* --------------------------------------------------------------- signals */
 
-constexpr uint32_t kSigNames = IF2_EA(0x00983910, 0x009EBFAC);   /* reflection table: name pointer per signal id */
+constexpr uint32_t kSigNames = IF2_R(SIG_NAMES);   /* reflection table: name pointer per signal id (disc 0x983910) */
 constexpr int      kMaxSig   = 128;
 int         g_nsig = 0;
 std::string g_sig_name[kMaxSig];
@@ -498,13 +498,19 @@ std::string image_cstr(uint32_t ea, size_t max)      /* a printable string in th
 bool load_signal_names()
 {
     int n = 0;
+    if (!IF2_HAVE(SIGNALS)) {
+        if2_feature_off("game signals (checkpoint boot driver)", "the signal name table");
+        g_nsig = 0;
+        return false;
+    }
     for (; n < kMaxSig; n++) {
         std::string s = image_cstr(vm_read32(kSigNames + 4u * (uint32_t)n), 48);
         if (s.empty() || s == "Sphere") break;          /* "Sphere" starts the next enum */
         g_sig_name[n] = s;
     }
-    /* 1.04 appends one id (109, ContmodekChanged); ids 0..108 are the disc EBOOT's */
-    if (n != IF2_V(109, 110) || g_sig_name[0] != "AmbientSpeech" || g_sig_name[105] != "WarpedToCheckpoint" ||
+    /* 1.04 appends one id (109, ContmodekChanged); ids 0..108 are the disc EBOOT's. Another build: the same
+     * first ids, maybe more after them. */
+    if ((IF2_EBOOT_KNOWN ? n != (IF2_EBOOT_V104 ? 110 : 109) : n < 109) || g_sig_name[0] != "AmbientSpeech" || g_sig_name[105] != "WarpedToCheckpoint" ||
         g_sig_name[48] != "MenuActivate") {
         CKLOG("the signal name table at 0x%08X is not that of %s (%d names) -- game "
               "signals off; the boot driver falls back to frame counts", kSigNames, IF2_EBOOT_NAME, n);
@@ -1246,7 +1252,7 @@ bool make_sandbox(const std::string& name)
             }
         }
         if (dir.empty() && read_file(join(src, "PARAM.SFO"), sfo)) dir = sfo_get(sfo, "SAVEDATA_DIRECTORY");
-        if (dir.empty()) dir = "BCUS98125_INFAMOUS2_0";
+        if (dir.empty()) dir = IF2_TITLE_ID "_INFAMOUS2_0";     /* the game names its saves after its TITLE_ID */
         const std::string d = join(root, dir);
         mkdirs(d);
         for (auto& f : list_dir(src, false)) {

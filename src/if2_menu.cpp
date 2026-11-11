@@ -89,53 +89,40 @@ extern "C" void     ps3_indirect_call(ppu_context* ctx);     /* runtime/ppu/ppu_
 
 extern "C" int if2_menu_install(void);
 
-#if defined(IF2_EBOOT_V104) && IF2_EBOOT_V104
+#if IF2_HAVE_MENU
 #define IF2_MENU_KNOWN 1
 /* the lifted functions this calls (generated/ppu) */
-void func_0067AE18(ppu_context* ctx);   /* the menus' per-frame input handler, as the input system calls it: the
+void IF2_F(MF_INPUT_THUNK)(ppu_context* ctx);   /* the menus' per-frame input handler, as the input system calls it: the
                                            * adjustor thunk `addi r3,r3,-0x31C; b 0x1CD0B8` (OPD 0x9BA628) */
-void func_001CC36C(ppu_context* ctx);   /* ADD_NAV_ACTION(menu, mask, from, to) */
-void func_0039A430(ppu_context* ctx);   /* string dictionary lookup (dict, id, 0) -> {id, "name\0text"} */
-void func_0039A788(ppu_context* ctx);   /* text box: set string id (tb, id) */
-void func_004CF4A0(ppu_context* ctx);   /* operator new (size) */
-void func_001BE00C(ppu_context* ctx);   /* scene object ADD (the script's ADD): back into the world, if out (+0x58) */
-void func_001CC78C(ppu_context* ctx);   /* the menu's joystick (menu) -> joystick object, 0 = none */
-void func_0010F31C(ppu_context* ctx);   /* the UI that has the input (ui mgr, 1, menu's screen id, menu) */
-void func_000C7908(ppu_context* ctx);   /* message box (title, text, buttons, 0, 0, 0, callback OPD, 0) */
-void func_001CB868(ppu_context* ctx);   /* the menu with this symbol (id) -> menu, 0 */
-void func_001CE3E0(ppu_context* ctx);   /* PUSH_MENU's C++ (menu, id) -> the menu pushed */
-void func_001CE83C(ppu_context* ctx);   /* POP_MENU's C++ (menu) */
-void func_001CDCF0(ppu_context* ctx);   /* CLEAR_ITEMS(menu): its items and the actions bound to them */
-void func_001CDBC8(ppu_context* ctx);   /* ADD_WIDGET_ITEM(menu, widget, symbol) */
-void func_001CCF68(ppu_context* ctx);   /* focus (menu, symbol) */
-void func_00495658(ppu_context* ctx);   /* ADD_WIDGET_BY_PROXY's C++ (widget list, proxy) -> the new row */
-void func_0049384C(ppu_context* ctx);   /* CLEAR(widget list): its rows go back to its pool */
-void func_00491D7C(ppu_context* ctx);   /* ADD_ITEM's C++ (list widget, key, label id, 0, colour) */
-void func_00491A34(ppu_context* ctx);   /* CURRENT_INDEX's setter (list widget, index) */
-void func_006B6F5C(ppu_context* ctx);   /* hash multimap insert (table, &key, &value) */
-void func_007428F8(ppu_context* ctx);   /* sys_lwmutex_lock (import stub) */
-void func_00742918(ppu_context* ctx);   /* sys_lwmutex_unlock (import stub) */
-void func_004E3DA4(ppu_context* ctx);   /* the dictionary's lock: made on first use */
-void func_0049374C(ppu_context* ctx);   /* REMOVE_WIDGET's C++ (widget list, row): out of the list, into its pool */
-void func_005302F8(ppu_context* ctx);   /* SET_HANDLER (widget, [handler]) -- the native */
-void func_001BDF74(ppu_context* ctx);   /* scene object REMOVE (the script's REMOVE): out of the world (+0x58) */
-/* MENU_TRACE: the menu natives the scripts call */
-#define IF2_TRACE_NATIVES(X) \
-    X(00531520, "PUSH_MENU") X(00531FB4, "POP_MENU") X(00531F24, "SWITCH_TO_MENU") X(00520B94, "ADD_WIDGET_ITEM") \
-    X(00527408, "CLEAR_ITEMS(menu)") X(00531D80, "ADD_WIDGET_BY_PROXY") X(00531490, "ADD_WIDGET_BY_CLASS") \
-    X(00528758, "REMOVE_WIDGET") X(00528734, "CLEAR(widget list)") X(005302F8, "SET_HANDLER") \
-    X(0052B1C8, "SET_LABEL") X(0052089C, "SET_LABEL(widget list)") X(0052B148, "SET_ACTION_SOUND") \
-    X(0052E9FC, "SET_INCREMENTS") X(00520AC0, "SET_VALUE_LABEL") X(00520A60, "SET_TEXT_COLOR(text)") \
-    X(005209D4, "SET_TEXT_COLOR(list)") X(00520A34, "ADD_SLOT") X(0052B288, "SET_SELECT_LIMITS") \
-    X(0052B270, "SET_NAV_BUTTONS") X(0052B25C, "SET_SCROLL_INDICATORS") X(0052B214, "CLEAR_ITEMS(list)") \
-    X(0052CE54, "SET_SLOT_TEXT_BOX") X(0052D0D8, "ADD_ITEM") X(00520974, "HANDLE_ACTION") X(00520BC4, "SET_VALUES") \
-    X(005273CC, "ADD_NAV_ACTION") X(00527340, "ADD_TRIGGER_ACTION") X(005272F4, "REMOVE_ACTIONS") \
-    X(00520C70, "SET_TEXT_BOX") X(00411D80, "ADD") X(00411DA4, "REMOVE") X(0052B00C, "UPDATE_TEXT_BOX")
-/* MENU_TRACE=2: also the property accessors (this in r3, a value in r4, the result in r3) */
-#define IF2_TRACE_ACCESSORS(X) \
-    X(00491424, "CURRENT_ITEM=") X(006F00D4, "CURRENT_ITEM?") X(00491A34, "CURRENT_INDEX=") \
-    X(0070119C, "CURRENT_VALUE=") X(006F00C4, "CURRENT_VALUE?") X(006F0A88, "FOCUS?") \
-    X(0039A788, "text=") X(001CC124, "STATE=") X(006F0A7C, "STATE?")
+void IF2_F(MF_ADD_NAV_ACTION)(ppu_context* ctx);   /* ADD_NAV_ACTION(menu, mask, from, to) */
+void IF2_F(MF_DICT_LOOKUP)(ppu_context* ctx);   /* string dictionary lookup (dict, id, 0) -> {id, "name\0text"} */
+void IF2_F(MF_TB_SET_STRING)(ppu_context* ctx);   /* text box: set string id (tb, id) */
+void IF2_F(MF_NEW)(ppu_context* ctx);   /* operator new (size) */
+void IF2_F(MF_OBJ_ADD)(ppu_context* ctx);   /* scene object ADD (the script's ADD): back into the world, if out (+0x58) */
+void IF2_F(MF_MENU_JOYSTICK)(ppu_context* ctx);   /* the menu's joystick (menu) -> joystick object, 0 = none */
+void IF2_F(MF_UI_INPUT)(ppu_context* ctx);   /* the UI that has the input (ui mgr, 1, menu's screen id, menu) */
+void IF2_F(MF_MSGBOX)(ppu_context* ctx);   /* message box (title, text, buttons, 0, 0, 0, callback OPD, 0) */
+void IF2_F(MF_MENU_BY_SYMBOL)(ppu_context* ctx);   /* the menu with this symbol (id) -> menu, 0 */
+void IF2_F(MF_PUSH_MENU)(ppu_context* ctx);   /* PUSH_MENU's C++ (menu, id) -> the menu pushed */
+void IF2_F(MF_POP_MENU)(ppu_context* ctx);   /* POP_MENU's C++ (menu) */
+void IF2_F(MF_CLEAR_ITEMS)(ppu_context* ctx);   /* CLEAR_ITEMS(menu): its items and the actions bound to them */
+void IF2_F(MF_ADD_WIDGET_ITEM)(ppu_context* ctx);   /* ADD_WIDGET_ITEM(menu, widget, symbol) */
+void IF2_F(MF_FOCUS)(ppu_context* ctx);   /* focus (menu, symbol) */
+void IF2_F(MF_ADD_WIDGET_BY_PROXY)(ppu_context* ctx);   /* ADD_WIDGET_BY_PROXY's C++ (widget list, proxy) -> the new row */
+void IF2_F(MF_WLIST_CLEAR)(ppu_context* ctx);   /* CLEAR(widget list): its rows go back to its pool */
+void IF2_F(MF_ADD_ITEM)(ppu_context* ctx);   /* ADD_ITEM's C++ (list widget, key, label id, 0, colour) */
+void IF2_F(MF_SET_CURRENT_INDEX)(ppu_context* ctx);   /* CURRENT_INDEX's setter (list widget, index) */
+void IF2_F(MF_MULTIMAP_INSERT)(ppu_context* ctx);   /* hash multimap insert (table, &key, &value) */
+void IF2_F(MF_LWMUTEX_LOCK)(ppu_context* ctx);   /* sys_lwmutex_lock (import stub) */
+void IF2_F(MF_LWMUTEX_UNLOCK)(ppu_context* ctx);   /* sys_lwmutex_unlock (import stub) */
+void IF2_F(MF_DICT_LOCK_MAKE)(ppu_context* ctx);   /* the dictionary's lock: made on first use */
+void IF2_F(MF_REMOVE_WIDGET)(ppu_context* ctx);   /* REMOVE_WIDGET's C++ (widget list, row): out of the list, into its pool */
+void IF2_F(MF_SET_HANDLER)(ppu_context* ctx);   /* SET_HANDLER (widget, [handler]) -- the native */
+void IF2_F(MF_OBJ_REMOVE)(ppu_context* ctx);   /* scene object REMOVE (the script's REMOVE): out of the world (+0x58) */
+void IF2_F(MF_NAT_ADD_WIDGET_ITEM)(ppu_context* ctx);   /* the ADD_WIDGET_ITEM native */
+void IF2_F(MF_NAT_ADD_NAV_ACTION)(ppu_context* ctx);    /* the ADD_NAV_ACTION native */
+/* MENU_TRACE: the menu natives the scripts call, and (MENU_TRACE=2) the property accessors: the ones the
+ * resolver found in this EBOOT, as IF2_TRACE_NATIVES / IF2_TRACE_ACCESSORS (generated/if2_resolved.h) */
 #define IF2_DECL_NATIVE(a, n) void func_##a(ppu_context* ctx);
 IF2_TRACE_NATIVES(IF2_DECL_NATIVE)
 IF2_TRACE_ACCESSORS(IF2_DECL_NATIVE)
@@ -146,11 +133,13 @@ IF2_TRACE_ACCESSORS(IF2_DECL_NATIVE)
 namespace {
 
 #if IF2_MENU_KNOWN
-constexpr uint32_t kToc       = 0x009DB730;   /* the EBOOT's TOC */
-constexpr uint32_t kMenuInput = 0x0067AE18;   /* key of the menus' input-handler thunk in the indirect-call table */
-constexpr uint32_t kStrMgr    = 0x009ACB10;   /* -> string manager; its dictionary at +8 (func_0039C67C) */
-constexpr uint32_t kUiMgr     = 0x009A5DD0;   /* -> the UI manager the menu handler asks who has the input */
-constexpr uint32_t kRepeatT   = 0x009A5E14;   /* f32: the menu handler's button-query argument (0.15) */
+/* (1.04: 0x9DB730, 0x67AE18, 0x9ACB10, 0x9A5DD0, 0x9A5E14; the vtables 0x940018, 0x954890, 0x954120, 0x943760,
+ * 0x9489E0) */
+constexpr uint32_t kToc       = IF2_R(TOC);              /* the EBOOT's TOC */
+constexpr uint32_t kMenuInput = IF2_R(MF_INPUT_THUNK);   /* key of the menus' input-handler thunk in the indirect-call table */
+constexpr uint32_t kStrMgr    = IF2_R(MD_STR_MGR);       /* -> string manager; its dictionary at +8 (func_0039C67C) */
+constexpr uint32_t kUiMgr     = IF2_R(MD_UI_MGR);        /* -> the UI manager the menu handler asks who has the input */
+constexpr uint32_t kRepeatT   = IF2_R(MD_REPEAT_T);      /* f32: the menu handler's button-query argument (0.15) */
 constexpr uint32_t kCbKey     = 0x00000400;   /* our message-box callback's "code address": never guest code */
 constexpr uint32_t kYes       = 7;            /* a Yes/No box's Yes (the Abandon Mission callback 0x1C78C0) */
 constexpr int      kMaxItems  = 32;
@@ -172,8 +161,8 @@ constexpr uint32_t D_LOCKED = 0x18, D_TABLE = 0x30;
 
 /* the Options screen and its parts (classes by vtable, parts by symbol) */
 constexpr uint32_t kOptMenuId = 0x9D86;       /* the Options menu (PUSH_MENU's argument in the pause menu's script) */
-constexpr uint32_t kMenuVt = 0x00940018, kListVt = 0x00954890, kWListVt = 0x00954120, kProxyVt = 0x00943760,
-                   kTextBoxVt = 0x009489E0;
+constexpr uint32_t kMenuVt = IF2_R(MD_VT_MENU), kListVt = IF2_R(MD_VT_LIST), kWListVt = IF2_R(MD_VT_WLIST),
+                   kProxyVt = IF2_R(MD_VT_PROXY), kTextBoxVt = IF2_R(MD_VT_TEXTBOX);
 constexpr uint32_t kWListId = 0xF9C, kRowProxyId = 0xA0B2, kLabelTbA = 0xA0E1, kLabelTbB = 0xA0E2;
 constexpr uint32_t kNavDpad = 0x5936;         /* u_menu_nav_dpad: "Navigate / Select / Back", the screen's footer */
 constexpr uint32_t kTmplStr = 0x5939;         /* u_menu_options: our records copy its flags */
@@ -307,13 +296,13 @@ uint64_t call_native(ppu_context* ctx, void (*fn)(ppu_context*), uint32_t self, 
  * "pressed within the repeat time" (vtable slot 0); a press is used up with slot 4 (as the handler does). */
 uint32_t input_joy(ppu_context* ctx, uint32_t menu)
 {
-    const uint32_t joy = (uint32_t)guest_call(ctx, func_001CC78C, menu);
+    const uint32_t joy = (uint32_t)guest_call(ctx, IF2_F(MF_MENU_JOYSTICK), menu);
     if (!plausible(joy)) return 0;
     if (!(guest_vcall(ctx, joy, 0x24) & 0xFF)) return 0;
     if ((int32_t)vm_read32(menu + M_BUSY) > 0) return 0;
     const uint32_t scr = vm_read32(menu + M_SCREEN);
     if (!plausible(scr)) return 0;
-    const uint32_t ui = (uint32_t)guest_call(ctx, func_0010F31C, vm_read32(kUiMgr), 1,
+    const uint32_t ui = (uint32_t)guest_call(ctx, IF2_F(MF_UI_INPUT), vm_read32(kUiMgr), 1,
                                              sx((int32_t)vm_read32(scr + 0x248)), menu);
     if (ui && plausible(ui) && vm_read32(ui + 0x190) != 2) return 0;
     return joy;
@@ -372,7 +361,7 @@ uint32_t str_rec(ppu_context* ctx, uint32_t id)
     if (id == 0xFFFFFFFFu) return 0;
     const uint32_t d = dict();
     if (!d) return 0;
-    const uint32_t rec = (uint32_t)guest_call(ctx, func_0039A430, d, id, 0);
+    const uint32_t rec = (uint32_t)guest_call(ctx, IF2_F(MF_DICT_LOOKUP), d, id, 0);
     return plausible(rec) && vm_read32(rec) == id ? rec : 0;
 }
 std::string str_name(ppu_context* ctx, uint32_t id)
@@ -384,7 +373,7 @@ std::string str_name(ppu_context* ctx, uint32_t id)
 uint32_t guest_new(ppu_context* ctx, uint32_t size)
 {
     size = (size + 15) & ~15u;
-    const uint32_t p = (uint32_t)guest_call(ctx, func_004CF4A0, size);
+    const uint32_t p = (uint32_t)guest_call(ctx, IF2_F(MF_NEW), size);
     if (!plausible(p)) return 0;
     for (uint32_t k = 0; k < size; k += 4) vm_write32(p + k, 0);
     return p;
@@ -404,10 +393,10 @@ uint32_t dict_insert(ppu_context* ctx, uint32_t id, uint32_t buf)
     vm_write32(rec + 8, vm_read32(tmpl + 8));
     vm_write32(rec + 12, vm_read32(tmpl + 12));
     vm_write32(rec + 16, rec);
-    if (!vm_read8(d + D_LOCKED)) guest_call(ctx, func_004E3DA4, d);
-    guest_call(ctx, func_007428F8, d, 0);
-    guest_call(ctx, func_006B6F5C, d + D_TABLE, rec, rec + 16);
-    guest_call(ctx, func_00742918, d);
+    if (!vm_read8(d + D_LOCKED)) guest_call(ctx, IF2_F(MF_DICT_LOCK_MAKE), d);
+    guest_call(ctx, IF2_F(MF_LWMUTEX_LOCK), d, 0);
+    guest_call(ctx, IF2_F(MF_MULTIMAP_INSERT), d + D_TABLE, rec, rec + 16);
+    guest_call(ctx, IF2_F(MF_LWMUTEX_UNLOCK), d);
     return str_rec(ctx, id) == rec ? rec : 0;
 }
 
@@ -583,8 +572,8 @@ void show_label(ppu_context* ctx, const Entry& e)
     if (!e.slot) return;
     for (uint32_t tb : e.tb) {
         if (!plausible(tb)) continue;
-        if (vm_read32(tb + T_LABEL) != e.label) guest_call(ctx, func_0039A788, tb, e.label);
-        if (vm_read8(tb + O_OUT)) guest_call(ctx, func_001BE00C, tb);
+        if (vm_read32(tb + T_LABEL) != e.label) guest_call(ctx, IF2_F(MF_TB_SET_STRING), tb, e.label);
+        if (vm_read8(tb + O_OUT)) guest_call(ctx, IF2_F(MF_OBJ_ADD), tb);
     }
 }
 bool label_shown(const Entry& e)
@@ -671,12 +660,12 @@ bool add_entries(ppu_context* ctx, uint32_t menu)
     const uint32_t mdown = a[down].mask, mup = a[up].mask;
     vm_write32(a[down].ea + 12, e[0].slot);      /* last --Down--> our first */
     vm_write32(a[up].ea + 12, e[n - 1].slot);    /* first --Up--> our last */
-    guest_call(ctx, func_001CC36C, menu, mup, e[0].slot, last);              /* our first --Up--> last */
+    guest_call(ctx, IF2_F(MF_ADD_NAV_ACTION), menu, mup, e[0].slot, last);              /* our first --Up--> last */
     for (int k = 0; k + 1 < n; k++) {
-        guest_call(ctx, func_001CC36C, menu, mdown, e[k].slot, e[k + 1].slot);
-        guest_call(ctx, func_001CC36C, menu, mup, e[k + 1].slot, e[k].slot);
+        guest_call(ctx, IF2_F(MF_ADD_NAV_ACTION), menu, mdown, e[k].slot, e[k + 1].slot);
+        guest_call(ctx, IF2_F(MF_ADD_NAV_ACTION), menu, mup, e[k + 1].slot, e[k].slot);
     }
-    guest_call(ctx, func_001CC36C, menu, mdown, e[n - 1].slot, first);       /* our last --Down--> first */
+    guest_call(ctx, IF2_F(MF_ADD_NAV_ACTION), menu, mdown, e[n - 1].slot, first);       /* our last --Down--> first */
     g_sel_mask = sel;
     if (n == 2) { g_pc = e[0]; g_quit = e[1]; } else g_quit = e[0];
     if (n == 2) fprintf(stderr, "[menu] pause menu 0x%08X: PC Settings and Quit Game added as entries %d-%d (items", menu,
@@ -696,11 +685,11 @@ void confirm_quit(ppu_context* ctx)
     const uint32_t title = str_id(ctx, kQuitText), text = str_id(ctx, kConfirmText);
     if (title == 0xFFFFFFFFu || text == 0xFFFFFFFFu) { fprintf(stderr, "[menu] Quit Game: no strings for the message box\n"); return; }
     /* the callback's OPD {key, TOC}: guest memory from the game's allocator */
-    const uint32_t opd = (uint32_t)guest_call(ctx, func_004CF4A0, 16);
+    const uint32_t opd = (uint32_t)guest_call(ctx, IF2_F(MF_NEW), 16);
     if (!plausible(opd)) { fprintf(stderr, "[menu] Quit Game: no memory for the message box callback\n"); return; }
     vm_write32(opd, kCbKey);
     vm_write32(opd + 4, kToc);
-    const uint32_t h = (uint32_t)guest_call(ctx, func_000C7908, title, text, kYesNo, 0, 0, 0, opd, 0);
+    const uint32_t h = (uint32_t)guest_call(ctx, IF2_F(MF_MSGBOX), title, text, kYesNo, 0, 0, 0, opd, 0);
     if (!plausible(h)) {
         fprintf(stderr, "[menu] Quit Game selected: the game's message box did not open (0x%08X)\n", h);
         fflush(stderr);
@@ -858,9 +847,9 @@ bool fill_row(ppu_context* ctx, uint32_t w, const std::vector<std::string>& vals
         for (uint32_t k : ids) if (k == id) { id = str_new(ctx, s); break; }   /* keys are unique per list */
         if (id == 0xFFFFFFFFu) { all = false; continue; }
         ids.push_back(id);
-        guest_call(ctx, func_00491D7C, w, id, id, 0, color);
+        guest_call(ctx, IF2_F(MF_ADD_ITEM), w, id, id, 0, color);
     }
-    guest_call(ctx, func_00491A34, w, sx(cur < 0 ? 0 : cur));
+    guest_call(ctx, IF2_F(MF_SET_CURRENT_INDEX), w, sx(cur < 0 ? 0 : cur));
     if (!all) fprintf(stderr, "[menu] PC Settings: a value got no string -- that row takes no change\n");
     return all;
 }
@@ -868,7 +857,7 @@ void set_row_label(ppu_context* ctx, uint32_t w, uint32_t sym)
 {
     for (uint32_t id : { kLabelTbA, kLabelTbB })
         if (const uint32_t tb = find_child(w, kTextBoxVt, id))
-            if (vm_read32(tb + T_LABEL) != sym) guest_call(ctx, func_0039A788, tb, sym);
+            if (vm_read32(tb + T_LABEL) != sym) guest_call(ctx, IF2_F(MF_TB_SET_STRING), tb, sym);
 }
 
 /* Empty the screen and pop it: the menu's items and their links, the pop, the rows' values, the widget list (its
@@ -877,13 +866,13 @@ void clear_screen(ppu_context* ctx, uint32_t b)
 {
     const uint32_t menu = vm_read32(b + B_MENU), wl = vm_read32(b + B_WLIST);
     const int n = (int)vm_read32(b + B_NROWS);
-    guest_call(ctx, func_001CDCF0, menu);
-    guest_call(ctx, func_001CE83C, menu);
+    guest_call(ctx, IF2_F(MF_CLEAR_ITEMS), menu);
+    guest_call(ctx, IF2_F(MF_POP_MENU), menu);
     for (int r = 0; r < n && r < kMaxRows; r++) {
         const uint32_t w = vm_read32(row_ea(b, r) + R_WIDGET);
         if (plausible(w) && vm_read32(w) == kListVt) guest_vcall(ctx, w, 0x160, sx(-1));
     }
-    if (plausible(wl) && vm_read32(wl) == kWListVt) guest_call(ctx, func_0049384C, wl);
+    if (plausible(wl) && vm_read32(wl) == kWListVt) guest_call(ctx, IF2_F(MF_WLIST_CLEAR), wl);
     vm_write32(b + B_NROWS, 0);
 }
 
@@ -893,8 +882,8 @@ uint32_t row_sym(ppu_context* ctx, int k) { return str_id(ctx, "#pc-settings-row
 /* a row in the world (drawn) or out of it, as the scripts' ADD / REMOVE */
 void row_show(ppu_context* ctx, uint32_t w, bool on)
 {
-    if (on && vm_read8(w + O_OUT)) guest_call(ctx, func_001BE00C, w);
-    else if (!on && !vm_read8(w + O_OUT)) guest_call(ctx, func_001BDF74, w);
+    if (on && vm_read8(w + O_OUT)) guest_call(ctx, IF2_F(MF_OBJ_ADD), w);
+    else if (!on && !vm_read8(w + O_OUT)) guest_call(ctx, IF2_F(MF_OBJ_REMOVE), w);
 }
 
 /* The screen's rows, once per open (rows made while the menu is up stay invisible until its next activation, so a
@@ -910,13 +899,13 @@ int make_rows(ppu_context* ctx, uint32_t b)
     for (int k = 0; k < want && px; k++) {
         const uint32_t sym = row_sym(ctx, k);
         if (sym == 0xFFFFFFFFu) break;
-        const uint32_t w = (uint32_t)guest_call(ctx, func_00495658, wl, px);
+        const uint32_t w = (uint32_t)guest_call(ctx, IF2_F(MF_ADD_WIDGET_BY_PROXY), wl, px);
         if (!plausible(w) || vm_read32(w) != kListVt) {
             fprintf(stderr, "[menu] PC Settings: the game made no row %d (0x%08X)\n", k, w);
             break;
         }
-        if (vm_read32(w + L_HANDLER)) call_native(ctx, func_005302F8, w, { 0 });   /* SET_HANDLER(row, none) */
-        guest_call(ctx, func_001CDBC8, menu, w, sym);
+        if (vm_read32(w + L_HANDLER)) call_native(ctx, IF2_F(MF_SET_HANDLER), w, { 0 });   /* SET_HANDLER(row, none) */
+        guest_call(ctx, IF2_F(MF_ADD_WIDGET_ITEM), menu, w, sym);
         const uint32_t e = row_ea(b, n);
         vm_write32(e + R_WIDGET, w);
         vm_write32(e + R_SYM, sym);
@@ -926,8 +915,8 @@ int make_rows(ppu_context* ctx, uint32_t b)
         syms[n++] = sym;
     }
     for (int k = 0; k < n; k++) {
-        guest_call(ctx, func_001CC36C, menu, kBtnUp, syms[k], syms[(k + n - 1) % n]);
-        guest_call(ctx, func_001CC36C, menu, kBtnDown, syms[k], syms[(k + 1) % n]);
+        guest_call(ctx, IF2_F(MF_ADD_NAV_ACTION), menu, kBtnUp, syms[k], syms[(k + n - 1) % n]);
+        guest_call(ctx, IF2_F(MF_ADD_NAV_ACTION), menu, kBtnDown, syms[k], syms[(k + 1) % n]);
     }
     vm_write32(b + B_NROWS, (uint32_t)n);
     vm_write32(b + B_NVIS, 0);
@@ -1055,7 +1044,7 @@ void update_footer(ppu_context* ctx, uint32_t b)
     for (int k = 0; k < nvis; k++) if (vm_read32(row_ea(b, k) + R_SYM) == focus) row = k;
     const std::string help = help_line(b, row);
     const uint32_t id = str_id(ctx, help.empty() ? std::string(kNavLine) : help + "\n" + kNavLine);
-    if (id != 0xFFFFFFFFu && vm_read32(foot + T_LABEL) != id) guest_call(ctx, func_0039A788, foot, id);
+    if (id != 0xFFFFFFFFu && vm_read32(foot + T_LABEL) != id) guest_call(ctx, IF2_F(MF_TB_SET_STRING), foot, id);
     g_foot_sig = (focus * 2654435761u) ^ (vm_read32(b + B_PAGE) * 40503u) ^ (opt_generation() * 97u) ^
                  vm_read32(b + B_SERIAL) ^ vm_read32(foot + T_LABEL);
 }
@@ -1065,7 +1054,7 @@ void close_screen(ppu_context* ctx, uint32_t b, const char* why);
 /* PC SETTINGS selected in the pause menu: push the Options menu and fill it with the rows of category `page`. */
 void open_screen(ppu_context* ctx, uint32_t pause, int page)
 {
-    const uint32_t opts = (uint32_t)guest_call(ctx, func_001CB868, kOptMenuId);
+    const uint32_t opts = (uint32_t)guest_call(ctx, IF2_F(MF_MENU_BY_SYMBOL), kOptMenuId);
     if (!plausible(opts) || vm_read32(opts) != kMenuVt) {
         fprintf(stderr, "[menu] PC Settings: no Options menu (0x%08X) -- not opened\n", opts);
         return;
@@ -1088,7 +1077,7 @@ void open_screen(ppu_context* ctx, uint32_t pause, int page)
     vm_write32(b + B_NROWS, 0);
     g_fill_rows = 0;
     g_fill_first = 0;
-    const uint32_t pushed = (uint32_t)guest_call(ctx, func_001CE3E0, pause, kOptMenuId);
+    const uint32_t pushed = (uint32_t)guest_call(ctx, IF2_F(MF_PUSH_MENU), pause, kOptMenuId);
     if (pushed != opts) {
         vm_write32(b + B_OPEN, 0);
         fprintf(stderr, "[menu] PC Settings: PUSH_MENU gave 0x%08X, not the Options menu 0x%08X\n", pushed, opts);
@@ -1110,7 +1099,7 @@ void open_screen(ppu_context* ctx, uint32_t pause, int page)
         return;
     }
     show_page(ctx, b, page);
-    guest_call(ctx, func_001CCF68, opts, vm_read32(row_ea(b, 0) + R_SYM));
+    guest_call(ctx, IF2_F(MF_FOCUS), opts, vm_read32(row_ea(b, 0) + R_SYM));
     update_footer(ctx, b);
     g_gen_seen = opt_generation();
 }
@@ -1121,7 +1110,7 @@ void restore_footer(ppu_context* ctx, uint32_t b)
     const uint32_t foot = vm_read32(b + B_FOOT);
     if (!plausible(foot) || vm_read32(foot) != kTextBoxVt) return;
     const uint32_t l = vm_read32(foot + T_LABEL);
-    if (l >= kIdBase && l < kIdEnd) guest_call(ctx, func_0039A788, foot, vm_read32(b + B_FOOT_ID));
+    if (l >= kIdBase && l < kIdEnd) guest_call(ctx, IF2_F(MF_TB_SET_STRING), foot, vm_read32(b + B_FOOT_ID));
 }
 
 /* Back / Start on the screen: as the game's Back -- the items out, the menu popped, the rows cleared. */
@@ -1164,7 +1153,7 @@ void resync_rows(ppu_context* ctx, uint32_t b)
         if (h != vm_read32(e + R_HASH)) {
             vm_write32(e + R_HASH, fill_row(ctx, w, vals, cur) ? h : 0);
         } else if ((int)vm_read32(w + L_INDEX) != cur) {
-            guest_call(ctx, func_00491A34, w, sx(cur));
+            guest_call(ctx, IF2_F(MF_SET_CURRENT_INDEX), w, sx(cur));
         }
         vm_write32(e + R_LAST, vm_read32(w + L_INDEX));
     }
@@ -1193,7 +1182,7 @@ bool screen_pre(ppu_context* ctx, uint32_t menu, uint32_t b)
         const int nvis = (int)vm_read32(b + B_NVIS);
         int row = 0;
         for (int k = 0; k < nvis; k++) if (vm_read32(row_ea(b, k) + R_SYM) == focus) row = k;
-        guest_call(ctx, func_001CCF68, menu, vm_read32(row_ea(b, row) + R_SYM));
+        guest_call(ctx, IF2_F(MF_FOCUS), menu, vm_read32(row_ea(b, row) + R_SYM));
     }
     return true;
 }
@@ -1226,7 +1215,7 @@ void screen_post(ppu_context* ctx, uint32_t menu, uint32_t b)
         const int idx = (int)vm_read32(w + L_INDEX), last = (int)vm_read32(e + R_LAST);
         if (idx == last) continue;
         if (!vm_read32(e + R_HASH)) {                 /* its values are incomplete: an index there is no value */
-            guest_call(ctx, func_00491A34, w, sx(last));
+            guest_call(ctx, IF2_F(MF_SET_CURRENT_INDEX), w, sx(last));
             continue;
         }
         const std::string key = row_key(b, r);
@@ -1277,7 +1266,7 @@ void menu_input(ppu_context* ctx)
         }
     }
     if (!g_on) {
-        func_0067AE18(ctx);
+        IF2_F(MF_INPUT_THUNK)(ctx);
         while (g_trampoline_fn) { void (*tf)(void*) = g_trampoline_fn; g_trampoline_fn = nullptr; tf(ctx); }
         return;
     }
@@ -1308,7 +1297,7 @@ void menu_input(ppu_context* ctx)
         }
     }
     if (scr && !screen_pre(ctx, menu, scr)) scr = 0;
-    func_0067AE18(ctx);
+    IF2_F(MF_INPUT_THUNK)(ctx);
     while (g_trampoline_fn) { void (*tf)(void*) = g_trampoline_fn; g_trampoline_fn = nullptr; tf(ctx); }
     if (scr) { screen_post(ctx, menu, scr); return; }
     if (ours && g_diag) {
@@ -1376,13 +1365,13 @@ void purge_fill(ppu_context* ctx, uint32_t b)
         if (plausible(w) && !our_row(b, w) && nf <= kMaxRows) foreign[nf++] = w;
     }
     for (int i = 0; i < nf; i++) {
-        if (vm_read32(foreign[i] + L_HANDLER)) call_native(ctx, func_005302F8, foreign[i], { 0 });
-        guest_call(ctx, func_0049374C, wl, foreign[i]);
+        if (vm_read32(foreign[i] + L_HANDLER)) call_native(ctx, IF2_F(MF_SET_HANDLER), foreign[i], { 0 });
+        guest_call(ctx, IF2_F(MF_REMOVE_WIDGET), wl, foreign[i]);
     }
     g_fill_rows += nf;
     hide_spare_rows(ctx, b);
     if (!our_sym(b, vm_read32(menu + M_FOCUS)) && vm_read32(b + B_NROWS))
-        guest_call(ctx, func_001CCF68, menu, vm_read32(row_ea(b, 0) + R_SYM));
+        guest_call(ctx, IF2_F(MF_FOCUS), menu, vm_read32(row_ea(b, 0) + R_SYM));
 }
 void icpt_add_widget_item(ppu_context* ctx)        /* ADD_WIDGET_ITEM(menu, [row, symbol]) */
 {
@@ -1411,7 +1400,7 @@ void icpt_focus(ppu_context* ctx)                  /* the FOCUS property's sette
 {
     if (const uint32_t b = our_menu(ctx, (uint32_t)ctx->gpr[3]))
         if (!our_sym(b, (uint32_t)ctx->gpr[4])) return;
-    func_001CCF68(ctx);
+    IF2_F(MF_FOCUS)(ctx);
 }
 
 /* the message box's callback: r3 = the button */
@@ -1480,8 +1469,8 @@ void trace_install()
 {
     if constexpr (K < kNTrace) {
         ppu_register_function(kTrace[K].addr, trace_nat<K>);
-        if (kTrace[K].addr == 0x00520B94u) g_next_awi = trace_nat<K>;
-        if (kTrace[K].addr == 0x005273CCu) g_next_nav = trace_nat<K>;
+        if (kTrace[K].addr == IF2_R(MF_NAT_ADD_WIDGET_ITEM)) g_next_awi = trace_nat<K>;
+        if (kTrace[K].addr == IF2_R(MF_NAT_ADD_NAV_ACTION)) g_next_nav = trace_nat<K>;
         trace_install<K + 1>();
     }
 }
@@ -1566,16 +1555,20 @@ extern "C" int if2_menu_install(void)
             if (*tr == '2') trace_acc_install<0>();
             fprintf(stderr, "[menu] MENU_TRACE: %d menu natives traced%s\n", kNTrace, *tr == '2' ? ", and the property accessors" : "");
         }
-    if (!g_next_awi) g_next_awi = func_00520B94;
-    if (!g_next_nav) g_next_nav = func_005273CC;
-    ppu_register_function(0x00520B94u, icpt_add_widget_item);    /* the game's fill on our screen (above) */
-    ppu_register_function(0x005273CCu, icpt_add_nav_action);
-    ppu_register_function(0x001CCF68u, icpt_focus);
+    if (!g_next_awi) g_next_awi = IF2_F(MF_NAT_ADD_WIDGET_ITEM);
+    if (!g_next_nav) g_next_nav = IF2_F(MF_NAT_ADD_NAV_ACTION);
+    ppu_register_function(IF2_R(MF_NAT_ADD_WIDGET_ITEM), icpt_add_widget_item);   /* the game's fill on our screen (above) */
+    ppu_register_function(IF2_R(MF_NAT_ADD_NAV_ACTION), icpt_add_nav_action);
+    ppu_register_function(IF2_R(MF_FOCUS), icpt_focus);
     fprintf(stderr, "[menu] native menu entries on: PC Settings and Quit Game in the pause menu (NATIVE_MENU=0 turns "
                     "them off)%s\n", g_diag ? "; MENU_DIAG logs every menu" : "");
     return 1;
 #else
+#if IF2_EBOOT_KNOWN
     fprintf(stderr, "[menu] native menu entries: not mapped for %s -- off\n", IF2_EBOOT_NAME);
+#else
+    if2_feature_off("native menu entries (PC Settings / Quit Game in the pause menu)", "the menu functions");
+#endif
     return 0;
 #endif
 }

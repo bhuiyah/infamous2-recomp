@@ -12,7 +12,8 @@ libraries are reimplemented, and the RSX graphics chip's commands are translated
 firmware, no keys and nothing generated from them. You build the executable on your own PC from your
 own disc and title update; the result stays on your machine.
 
-Target: **BCUS98125** (North America), **title update 1.04**.
+Target: **BCUS98125** (North America), **title update 1.04**. European copies (**BCES01143** Europe,
+**BCES01144** UK): **beta** -- see [European copies (beta)](#european-copies-beta).
 
 ## Screenshots
 
@@ -84,10 +85,10 @@ Captured from the port running on Windows (2560x1080 monitor); cropped and resiz
 ## What you need
 
 - **Your own inFamous 2 (BCUS98125)** dumped from your own disc, plus **title update 1.04** installed
-  from your own console or PSN (the updates in order, or their 1.04 files). **Only the US edition is supported
-  for now:** a European (BCES01143), UK (BCES01144) or other copy is refused at the file check -- the port's
-  title-specific code is made for the US build. For Russian and the other European languages, use a US copy
-  with *Language edition: Europe* (see Features).
+  from your own console or PSN (the updates in order, or their 1.04 files). A European (BCES01143) or UK
+  (BCES01144) copy works as a **beta** ([below](#european-copies-beta)); other editions are refused at the
+  file check. Russian and the other European languages are also available on a US copy with
+  *Language edition: Europe* (see Features).
 - **RPCS3** (free) to decrypt two files you own: the update's `EBOOT.BIN` -> `EBOOT.elf`, and the
   firmware's `dev_flash/sys/external/libsre.sprx` -> `libsre.prx` (install the official PS3 firmware in
   RPCS3 first). Step by step: [game/README.md](game/README.md).
@@ -217,19 +218,47 @@ your disc + update ──RPCS3 decrypt──▶ EBOOT.elf, libsre.prx
   button work too. A save the game is writing finishes first.
 - **Something looks wrong?** Press **F8**: the moment is marked in the session's issues file and a
   screenshot is saved beside it.
-- **Reporting:** send `logs\play-<time>-issues.txt` and any `-markN.png`. After a crash there is also a
+- **Reporting:** press **Save report** in the launcher (`logs\report-<date>.txt`: the build's state and
+  the logs' last lines, personal paths removed), and send it with `logs\play-<time>-issues.txt` and any
+  `-markN.png`. After a crash there is also a
   `-crash.dmp`: useful, but it contains your Windows user name in file paths.
   `set PLAY_ISSUES=0` turns the issues file off.
 - Save states (`savestates\`), texture dumps and the game's saves (`gamedata\`) are made from your copy of
   the game: never share or commit them.
+
+## European copies (beta)
+
+Nobody on the team owns a European disc, so European support is built to be checked from a distance:
+
+- The port's title-specific code needs about two hundred addresses in the game's executable (functions it
+  calls or hooks, values it patches). They are no longer fixed US addresses: the **lift** step finds each one
+  in *your* EBOOT by code pattern (`tools/if2_resolve.py`) and writes what it found to
+  `analysis\resolve_report.txt` and the launcher's log -- every item found, ambiguous or missing. On the US
+  EBOOTs the same patterns reproduce every known address exactly.
+- A feature whose addresses were not all found is switched off, and the game keeps its own behaviour there
+  (for example the ultrawide aspect, the native PC Settings entry in the pause menu, the checkpoint tools).
+  The game itself still boots and plays.
+- With a European disc the game picks the European language list from its own title id: *System > Language*
+  offers English (UK), French, Italian, German, Spanish, Dutch, Polish, Portuguese and Russian, and there is no
+  *Language edition* setting (a UK disc has British English only). Saves, save states and DLC use your disc's
+  own title id.
+- Step 2 (check) accepts a BCES01143 / BCES01144 EBOOT it does not know by SHA-1 only when the game's
+  structure resolves in it; anything else still stops there.
+
+**To help:** build and play, then press **Save report** in the launcher. It saves
+`logs\eu-report-<date>.txt` -- your EBOOT and libsre identity (SHA-1, size), what the build found in your
+EBOOT, the build state, and the last lines of the launcher's and the game's logs, with your user folder,
+user name and computer name replaced by `%USERPROFILE%`, `%USERNAME%` and `%COMPUTERNAME%`. Attach it to
+[issue #3](https://github.com/bhuiyah/infamous2-recomp/issues/3) (or a new issue). Save it again after
+playing a while if something went wrong in game.
 
 ## Status and known issues
 
 The prologue and the opening of New Marais have been played and tuned on the test PC with the features
 above; **a full playthrough has not been verified yet.** It is a young port; expect rough edges:
 
-- Only **BCUS98125** with **update 1.04** (or its 1.00 disc EBOOT) is supported; other regions and the
-  updates 1.01-1.03 have no title-specific values and are refused.
+- **BCUS98125** with **update 1.04** (or its 1.00 disc EBOOT) is the supported build; the European discs
+  are a beta (above); other regions are refused.
 - **Languages:** the disc also holds Russian, German, Italian, Polish, Japanese and others, but the US edition
   never offers them: on a PS3 set to one of those it plays in English, and so does the port by default
   (`docs/NOTES.md`, 2026-11-11). *Language edition: Europe* (opt-in) unlocks the European ones; Japanese,
@@ -249,7 +278,7 @@ above; **a full playthrough has not been verified yet.** It is a young port; exp
 |---|---|
 | `launcher/` | the launcher's source; `tools\build_launcher.cmd` builds `inFamous2Launcher.exe` |
 | `src/` | the port: runner, title hooks, menus, checkpoints, clocks |
-| `tools/` | the pipeline, the run script, diagnostics |
+| `tools/` | the pipeline, the run script, diagnostics; `if2_resolve.py` + `if2_items.py` find the title's addresses in your EBOOT (patterns: `config/if2_sigs.json`) |
 | `patches/ps3recomp/` | the changes to the ps3recomp toolkit, applied by `tools/setup.ps1` |
 | `config/` | display, input and save-state settings (`options.ini` is written by the game) |
 | `docs/` | controllers, save states, ground truth, roadmap, the engineering journal |

@@ -12,9 +12,15 @@ Expected layout (see game/README.md):
 Checks: the SFO parses and names a known inFamous 2 release; the EBOOT is a
 decrypted big-endian PPC64 ELF and not a still-encrypted SELF, and whether its
 SHA-1 is one of the known decrypted retail EBOOTs; whether a title update is
-present and which EBOOT the pipeline will therefore lift (the title hooks have
-values for the disc EBOOT and update 1.04 only); and the decrypted libsre.prx
-that tools/lift_libsre.sh lifts. Writes the result (with the EBOOT's SHA-1, so
+present and which EBOOT the pipeline will therefore lift; and the decrypted
+libsre.prx that tools/lift_libsre.sh lifts.
+
+Editions: the US disc (BCUS98125) with update 1.04 is the supported one. The
+European discs (BCES01143 Europe, BCES01144 UK) are BETA: their EBOOT's title
+addresses are found by pattern (tools/if2_resolve.py), and an EBOOT this script
+does not know by SHA-1 is let through only when that resolver finds the game's
+structure in it (a probe, printed here). Everything else stops, unless
+IF2_ALLOW_UNKNOWN_EBOOT=1 (development). Writes the result (with the EBOOT's SHA-1, so
 lifts are reproducible) to analysis/inputs.json, which tools/relift.sh reads.
 """
 from __future__ import annotations
@@ -43,12 +49,14 @@ EDITIONS = {
     "NPEA90095": "Europe, PSN demo", "NPEA90096": "Europe, PSN demo", "NPHA80154": "Asia, PSN demo",
     "NPJA90193": "Japan, PSN demo", "NPUA70154": "North America, PSN demo", "NPUA70146": "North America, PSN demo",
 }
-# An EBOOT that is not one of KNOWN_EBOOTS is an error: the title hooks hold the addresses of those two
-# builds alone, and another EBOOT fails later and less clearly (issue #3: "Wws_Job module: the bytes at
-# 0x008E5B00 are not the known module" in step 6). IF2_ALLOW_UNKNOWN_EBOOT=1 makes it a warning (development).
-SUPPORT = ("This build supports only the US edition, BCUS98125, with title update 1.04 (or its 1.00 disc "
-           "EBOOT). Russian, German, Italian, Polish and the other European languages are available on a US "
-           "copy: PC Settings > System > Language edition: Europe.")
+# The European discs: BETA (issue #3). Their title addresses are found by pattern; see the docstring.
+BETA_EDITIONS = {"BCES01143": "Europe", "BCES01144": "UK"}
+# An EBOOT that is not one of KNOWN_EBOOTS (and not a beta edition's whose structure resolves) is an error: it
+# would fail later and less clearly. IF2_ALLOW_UNKNOWN_EBOOT=1 makes it a warning (development).
+SUPPORT = ("This build supports the US edition, BCUS98125, with title update 1.04 (or its 1.00 disc EBOOT), and, "
+           "as a beta, the European editions BCES01143 (Europe) and BCES01144 (UK). Russian, German, Italian, "
+           "Polish and the other European languages are also available on a US copy: PC Settings > System > "
+           "Language edition: Europe.")
 ALLOW_UNKNOWN_ENV = "IF2_ALLOW_UNKNOWN_EBOOT"
 
 
@@ -65,6 +73,13 @@ KNOWN_EBOOTS = {
     "f1c20717d6532dfb27e292a5db6cdf5a3218760b": "BCUS98125 disc EBOOT (v02.00, APP_VER 01.00)",
     "7814ff1a87d7d3d10bd0e9627dc05ac353ed4162": "BCUS98125 title update 1.04 EBOOT",
 }
+# Beta: EBOOTs of the European editions players have reported (issue #3), by SHA-1. Their addresses are found
+# by pattern like any other's; this only names them.
+BETA_EBOOTS = {
+    "4bfff4699fb607fe6864bc54d564c7ecb2324364": ("BCES01143", "Europe, beta (the EBOOT reported as update 1.04's)"),
+}
+# The US builds' sizes, to tell a player which one an unknown EBOOT resembles
+US_SIZES = {10159776: "the US disc EBOOT (1.00)", 10605256: "the US update 1.04 EBOOT"}
 # The decrypted libsre.prx the port was developed with. Other firmware versions may work.
 KNOWN_LIBSRE = {
     "c2f5d2dbf1c58eadcc3367dc34b28f80c4251a67": "libsre.prx (cellSre_Library) the port was developed with",
@@ -121,6 +136,38 @@ def check_libsre(path: Path) -> tuple[bool, str]:
     return True, "decrypted libsre PRX"
 
 
+def resolver_probe(eboot: Path, title_id: str):
+    """tools/if2_resolve.py --probe on an EBOOT this script does not know: does the game's structure resolve in
+    it? -> {"ok", "summary", "family", ...} or None when the resolver cannot run."""
+    import subprocess
+    import tempfile
+    out = Path(tempfile.gettempdir()) / f"if2_probe_{os.getpid()}.json"
+    try:
+        r = subprocess.run([sys.executable, str(ROOT / "tools" / "if2_resolve.py"), "resolve", "--probe",
+                            "--eboot", str(eboot), "--title-id", title_id, "--out-json", str(out)],
+                           capture_output=True, text=True, timeout=600)
+        for line in r.stdout.splitlines():
+            print("    " + line)
+        p = json.loads(out.read_text())
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        print(f"[!] the structure probe did not run ({e})")
+        return None
+    finally:
+        try:
+            out.unlink()
+        except OSError:
+            pass
+    c = p.get("core", {})
+    found, amb, total = c.get("found", 0), c.get("ambiguous", 0), c.get("total", 1)
+    # The game's structure resolves: most of the core items (what both US builds have) are found, none of them in
+    # two places (an ambiguous core item means the patterns do not fit this code well). The probe decodes
+    # without the lift's function list, so a few values that need it are only checked in the lift step.
+    p["ok"] = found >= 0.75 * total and amb == 0
+    p["summary"] = (f"{found} of {total} core title items found, {amb} ambiguous; layout like the US "
+                    f"{'update 1.04' if p.get('family') == 104 else 'disc EBOOT (1.00)'}")
+    return p
+
+
 def sha1(path: Path) -> str:
     h = hashlib.sha1()
     with path.open("rb") as f:
@@ -159,8 +206,12 @@ def main() -> int:
     print(f"[i] PARAM.SFO: {sfo.get('TITLE', '?')}  id={title_id}  "
           f"disc version={sfo.get('VERSION', '?')}  app_ver={sfo.get('APP_VER', '?')}")
     allow_unknown = os.environ.get(ALLOW_UNKNOWN_ENV, "") == "1"
+    beta = title_id in BETA_EDITIONS
     if title_id == "BCUS98125":
         print(f"[ok] {KNOWN_IDS[title_id]}")
+    elif beta:
+        print(f"[ok] {KNOWN_IDS[title_id]} -- BETA: European support is new and tested only on players' copies; "
+              f"the build finds the game's addresses in your EBOOT by pattern and logs what it found")
     else:
         (warnings if allow_unknown else errors).append(
             f"your disc is {edition_of(title_id)}. {SUPPORT}"
@@ -194,9 +245,34 @@ def main() -> int:
             errors.append(f"{target.name}: {msg}")
         else:
             digest = sha1(target)
-            print(f"[i] sha1 {digest}  size {target.stat().st_size:,} bytes")
+            size = target.stat().st_size
+            print(f"[i] sha1 {digest}  size {size:,} bytes")
+            probe = None
+            if digest not in KNOWN_EBOOTS:
+                probe = resolver_probe(target, title_id)
+                if probe is not None:
+                    result["resolve_probe"] = probe
+            if probe is not None and probe["ok"] and label == "update" and probe.get("family") == 100:
+                warnings.append(
+                    f"the update's EBOOT ({size:,} bytes) looks like a disc (1.00) build, not 1.04: its code matches "
+                    f"the US disc EBOOT's layout" + (f" (and it is the size of {US_SIZES[size]})" if size in US_SIZES
+                                                     else "") +
+                    ". If you meant the update, decrypt game/hdd0/game/" + title_id + "/USRDIR/EBOOT.BIN (the "
+                    "update's own) and put that EBOOT.elf there. The build goes on with this one, and the game then runs "
+                    "as the disc version, without the update's files (as a PS3 runs the disc EBOOT).")
             if digest in KNOWN_EBOOTS:
                 print(f"[ok] {KNOWN_EBOOTS[digest]}")
+            elif beta and probe is not None and probe["ok"]:
+                name = BETA_EBOOTS[digest][1] if digest in BETA_EBOOTS else f"{edition_of(title_id)}, beta"
+                print(f"[ok] {name}: the game's structure resolves in it ({probe['summary']}) -- BETA")
+            elif beta and probe is not None:
+                (warnings if allow_unknown else errors).append(
+                    f"the {label} EBOOT (SHA-1 {digest}) is the {edition_of(title_id)} edition's, but the game's "
+                    f"structure does not resolve in it ({probe['summary']}): it is not an inFamous 2 EBOOT this "
+                    f"build can use (a damaged or wrongly decrypted dump also lands here). Send the launcher's "
+                    f"report (Save report) to the beta thread."
+                    + (f" ({ALLOW_UNKNOWN_ENV}=1: going on anyway.)" if allow_unknown
+                       else f" (Developers: {ALLOW_UNKNOWN_ENV}=1 makes this a warning.)"))
             else:
                 (warnings if allow_unknown else errors).append(
                     f"the {label} EBOOT {target.relative_to(args.game)} (SHA-1 {digest}) is not a supported "
@@ -206,11 +282,18 @@ def main() -> int:
                     + (f" ({ALLOW_UNKNOWN_ENV}=1: going on anyway.)" if allow_unknown
                        else f" (Developers: {ALLOW_UNKNOWN_ENV}=1 makes this a warning.)"))
             result.update(eboot=str(target.resolve()), eboot_source=label,
-                          eboot_sha1=digest, update_app_ver=upd_ver)
-        if target is upd_eboot:
+                          eboot_sha1=digest, update_app_ver=upd_ver, eboot_size=size,
+                          edition=("North America" if title_id == "BCUS98125" else
+                                   BETA_EDITIONS.get(title_id, EDITIONS.get(title_id, title_id))),
+                          beta=title_id != "BCUS98125" or digest not in KNOWN_EBOOTS)
+        disc_layout = (result.get("resolve_probe") or {}).get("family") == 100
+        if target is upd_eboot and disc_layout:
+            print(f"[i] lifting the EBOOT in the update folder (APP_VER {upd_ver}) -- a disc-layout build: it runs "
+                  "without the update's files (see the [!] below)")
+        elif target is upd_eboot:
             print(f"[i] lifting the title-update EBOOT (APP_VER {upd_ver}); disc assets still "
                   "come from game/disc. Set PS3_HDD0_ROOT=game/hdd0 at runtime.")
-            if upd_ver not in SUPPORTED_UPDATES:
+            if upd_ver not in SUPPORTED_UPDATES and not beta:
                 errors.append(f"title update APP_VER {upd_ver}: the title hooks have values for the disc "
                               "EBOOT and update 1.04 only -- install every update up to 1.04 "
                               "(game/README.md), or build the disc EBOOT with tools\\build.ps1 -Disc")
@@ -230,8 +313,9 @@ def main() -> int:
             if digest in KNOWN_LIBSRE:
                 print(f"[ok] {KNOWN_LIBSRE[digest]}")
             else:
-                warnings.append("libsre.prx is from another firmware version than the one the port was "
-                                "developed with; it should work, but is untested")
+                # (issue #4: a player read this note as the cause of a failed build. It never stops anything.)
+                print("[ok] libsre.prx: decrypted; from another firmware build than the tested one -- this is fine "
+                      "and does not stop the build")
             result.update(libsre=str(libsre.resolve()), libsre_sha1=digest)
         else:
             errors.append(f"{libsre.name}: {msg}")

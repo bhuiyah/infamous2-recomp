@@ -111,7 +111,7 @@ if (Want "jobs") {
     # The four policy modules are byte copies from the EBOOT and libsre (no run of the game needed);
     # a capture from tools\run.ps1 -DumpSpu in analysis\pm works the same.
     & $py tools\extract_policy_modules.py 2>&1 | ForEach-Object { "$_" }
-    Need ($LASTEXITCODE -eq 0) "extract_policy_modules.py failed -- the [x] lines above say why (an EBOOT that is not BCUS98125 1.00 / 1.04: this port supports the US edition only)"
+    Need ($LASTEXITCODE -eq 0) "extract_policy_modules.py failed -- the [x] lines above say why (for a European copy, beta: press Save report in the launcher and send the file)"
     # (located in the EBOOT being lifted: a title update moves them, and 1.04 rebuilt 16 of the 27 job modules)
     & $bash tools/lift_jobs.sh 2>&1 | ForEach-Object { "$_" }
     Need ($LASTEXITCODE -eq 0) "lift_jobs.sh failed"

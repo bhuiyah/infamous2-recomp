@@ -43,6 +43,15 @@ SEEDS=(--seed-json analysis/EBOOT.functions.json)
 [ -f analysis/functions.overrides.json ] && SEEDS+=(--seed-json analysis/functions.overrides.json)
 "$PY" "$SDK/tools/find_functions.py" "$EBOOT" "${SEEDS[@]}" --output analysis/functions.json
 
+# ---- the title's addresses in this EBOOT ----------------------------------
+# tools/if2_resolve.py finds every address the title code uses (hooks, globals, patched instructions) in this
+# EBOOT by code patterns (config/if2_sigs.json) and writes generated/if2_resolved.h (src/ compiles with it),
+# analysis/resolve.json (ppu_postlift.py, extract_policy_modules.py) and analysis/resolve_report.txt (printed
+# here, so the launcher's log holds it). On a US EBOOT every value is cross-checked; a mismatch stops the lift.
+mkdir -p generated
+"$PY" tools/if2_resolve.py resolve
+KNOWN="$("$PY" -c 'import json;print(json.load(open("analysis/resolve.json")).get("known") or "")')"
+
 # ---- PPU lift -------------------------------------------------------------
 # --hle-stubs: each import trampoline becomes ps3_hle_call(nid). Without it the
 #              first firmware call jumps to 0x39800000 (`li r12,0`) and dies.
@@ -58,13 +67,13 @@ fi
 #              "missing" reports (tools/ss_selfresume.py --missing).
 #              One list per EBOOT build: ss_cont_list.txt is the disc EBOOT's, ss_cont_list.104.txt
 #              title update 1.04's (eboot_map.py translate of the disc list; what did not map is listed
-#              at its end).
+#              at its end). Any other EBOOT: both lists carried over function by function by
+#              if2_resolve.py (analysis/ss_cont_list.resolved.txt).
 CONT=()
-UPD="$("$PY" -c 'import json;print(json.load(open("analysis/inputs.json")).get("update_app_ver") or "")')"
-case "$UPD" in
-    "")    CONT_LIST=config/ss_cont_list.txt ;;
-    01.04) CONT_LIST=config/ss_cont_list.104.txt ;;
-    *)     CONT_LIST=none ;;
+case "$KNOWN" in
+    us100) CONT_LIST=config/ss_cont_list.txt ;;
+    us104) CONT_LIST=config/ss_cont_list.104.txt ;;
+    *)     CONT_LIST=analysis/ss_cont_list.resolved.txt ;;
 esac
 [ -f "$CONT_LIST" ] && CONT=(--cont-list "$CONT_LIST")
 "$PY" "$SDK/tools/ppu_lifter.py" "$EBOOT" \

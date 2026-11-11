@@ -27,9 +27,10 @@ the same call in it, so a resumed thread runs the same code; a function with
 no copy is simply skipped.
 
 The anchors name lifted functions and guest addresses, so each EBOOT build
-has its own table: HOOKS for the disc EBOOT, HOOKS_V104 for title update
-1.04 (the same hooks; functions, return addresses and one frame offset moved),
-chosen from analysis/inputs.json (update_app_ver) next to the lift.
+has its own table, made from tools/if2_resolve.py's analysis/resolve.json (the
+functions, call sites and the frame offset it found in this EBOOT). HOOKS (the
+disc EBOOT) and HOOKS_V104 (title update 1.04) are the US builds' tables: on
+those EBOOTs the resolved table must be exactly theirs.
 """
 import json
 import os
@@ -82,18 +83,59 @@ HOOKS_V104 = [
 ]
 
 
+def hooks_from_resolve(res):
+    """The hook table for this EBOOT from tools/if2_resolve.py's analysis/resolve.json: each hook whose items
+    were found (a hook whose function or site was not is left out, and said so)."""
+    it = res["items"]
+
+    def ok(*names):
+        return all(it.get(n, {}).get("status") == "found" for n in names)
+
+    def fn(n):
+        return "func_%08X" % it[n]["value"]
+    out, off = [], []
+    if ok("pl_fmv_fn", "pl_fmv_call", "pl_fmv_callee"):
+        out.append((fn("pl_fmv_fn"), "ctx->lr = 0x%08X; func_%08X(ctx);" % (it["pl_fmv_call"]["value"] + 4,
+                    it["pl_fmv_callee"]["value"]), HOOKS[0][2], HOOKS[0][3]))
+    else:
+        off.append(HOOKS[0][2])
+    if ok("pl_signal_fn"):
+        out.append((fn("pl_signal_fn"), HOOKS[1][1], HOOKS[1][2], HOOKS[1][3]))
+    else:
+        off.append(HOOKS[1][2])
+    if ok("pl_phys_fn", "pl_phys_call", "pl_phys_callee"):
+        out.append((fn("pl_phys_fn"), "ctx->lr = 0x%08X; func_%08X(ctx);" % (it["pl_phys_call"]["value"] + 4,
+                    it["pl_phys_callee"]["value"]), HOOKS[2][2], HOOKS[2][3]))
+        out.append((fn("pl_phys_fn"), HOOKS[3][1], HOOKS[3][2], HOOKS[3][3]))
+    else:
+        off += [HOOKS[2][2], HOOKS[3][2]]
+    w = it.get("pl_mesh_lrsave", {}).get("word")
+    if ok("pl_mesh_fn", "pl_mesh_lrsave") and w is not None and (w >> 16) == 0xF801 and (w & 3) == 0:
+        out.append((fn("pl_mesh_fn"), "vm_write64(ctx->gpr[1] + 0x%X, ctx->gpr[0]);" % (w & 0xFFFC),
+                    HOOKS[4][2], HOOKS[4][3]))
+    else:
+        off.append(HOOKS[4][2])
+    return out, off
+
+
 def hooks_for(gen_dir):
-    """The hook table for the EBOOT this lift is of (analysis/inputs.json beside generated/)."""
-    inputs = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(gen_dir))), "analysis", "inputs.json")
+    """The hook table for the EBOOT this lift is of (analysis/resolve.json beside generated/). On the US builds
+    it must be HOOKS / HOOKS_V104 exactly."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(gen_dir)))
     try:
-        upd = json.load(open(inputs)).get("update_app_ver")
+        res = json.load(open(os.path.join(root, "analysis", "resolve.json")))
     except (OSError, ValueError):
-        upd = None
-    if not upd:
-        return "disc EBOOT", HOOKS
-    if upd == "01.04":
-        return "title update 1.04", HOOKS_V104
-    return "title update %s (no table: no hooks)" % upd, []
+        return "no analysis/resolve.json (run tools/if2_resolve.py): no hooks", []
+    hooks, off = hooks_from_resolve(res)
+    known = res.get("known")
+    want = {"us100": HOOKS, "us104": HOOKS_V104}.get(known)
+    if want is not None and hooks != want:
+        raise SystemExit("ppu_postlift: the resolved hook table for %s differs from the known one:\n  %s\n  %s"
+                         % (known, hooks, want))
+    name = {"us100": "disc EBOOT", "us104": "title update 1.04"}.get(known) or \
+        "%s (resolved by pattern%s)" % (res.get("eboot", "EBOOT"), "; not found: " + ", ".join(off) if off else "")
+    return name, hooks
+
 
 TAG = "ppu_postlift"
 

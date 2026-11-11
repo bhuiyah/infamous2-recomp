@@ -136,39 +136,45 @@ extern "C" int32_t cellGcmGetConfiguration(void* config);
 
 namespace {
 
-constexpr uint32_t kH         = IF2_EA(0x0096EF84, 0x009D7214);   /* output height (int) */
-constexpr uint32_t kW         = IF2_EA(0x0096EF88, 0x009D7218);   /* aspect width (int) */
-constexpr uint32_t kSafeX     = IF2_EA(0x00A010B0, 0x00A6E8D0);   /* UI safe-area X margin */
-constexpr uint32_t kRenderW   = IF2_EA(0x00A009DC, 0x00A6E1FC);   /* render width (int, 1280) */
-constexpr uint32_t kSlotNoise = IF2_EA(0x0093C67C, 0x009A2494);   /* -> W, read at 0xE55A4 only */
-constexpr uint32_t kSlotTexel = IF2_EA(0x00944760, 0x009AA990);   /* -> W, read at 0x2EB448 only */
-constexpr uint32_t kSlotFmv   = IF2_EA(0x00944600, 0x009AA82C);   /* -> W, read at 0x2E7F7C only (FMV quad) */
-constexpr uint32_t kSlotCam   = IF2_EA(0x00948D90, 0x009AF3EC);   /* -> W, camera ctor only */
+/* (tools/if2_items.py: disc EBOOT 0x96EF84 / 0x96EF88 / 0xA010B0 / 0xA009DC, slots 0x93C67C / 0x944760 /
+ * 0x944600 / 0x948D90) */
+constexpr uint32_t kH         = IF2_R(DISP_H);       /* output height (int) */
+constexpr uint32_t kW         = IF2_R(DISP_W);       /* aspect width (int) */
+constexpr uint32_t kSafeX     = IF2_R(SAFE_X);       /* UI safe-area X margin */
+constexpr uint32_t kRenderW   = IF2_R(RENDER_W);     /* render width (int, 1280) */
+constexpr uint32_t kSlotNoise = IF2_R(SLOT_NOISE);   /* -> W, read at 0xE55A4 only */
+constexpr uint32_t kSlotTexel = IF2_R(SLOT_TEXEL);   /* -> W, read at 0x2EB448 only */
+constexpr uint32_t kSlotFmv   = IF2_R(SLOT_FMV);     /* -> W, read at 0x2E7F7C only (FMV quad) */
+constexpr uint32_t kSlotCam   = IF2_R(SLOT_CAM);     /* -> W, camera ctor only */
 
 struct LodConst { uint32_t ea; uint32_t stock; int power; const char* what; };
 /* power: the threshold scales by k^power */
-constexpr LodConst kLod[] = {
+constexpr LodConst kLodAll[] = {
+#if IF2_HAVE_LOD
     /* (the reader named in each string is this EBOOT's) */
-    { IF2_EA(0x0093DE54, 0x009A3D00), 0x47AFC800u,  2, IF2_V("(d*tanX)^2 < 90000 (0x147F30)", "(d*tanX)^2 < 90000 (0x151D58)") },
-    { IF2_EA(0x00945BE4, 0x009ABE28), 0x42200000u,  1, IF2_V("d*0.005*tanX vs 40 (0x343CEC)", "d*0.005*tanX vs 40 (0x35D7CC)") },
-    { IF2_EA(0x00949244, 0x009AF8A4), 0x3E4CCCCDu, -1, IF2_V("r/(d*tanX) vs 0.2 (0x44D364)", "r/(d*tanX) vs 0.2 (0x48C97C)") },
-    { IF2_EA(0x009442CC, 0x009AA4F4), 0x3DCCCCCDu, -1, IF2_V("visprog mode 3: 0.1 (0x2D6368)", "visprog mode 3: 0.1 (0x2EDAC0)") },
-#if defined(IF2_EBOOT_V104) && IF2_EBOOT_V104
+    { IF2_R(LOD_0), 0x47AFC800u,  2, IF2_KNOWN_STR("(d*tanX)^2 < 90000 (0x147F30)", "(d*tanX)^2 < 90000 (0x151D58)", "(d*tanX)^2 < 90000") },
+    { IF2_R(LOD_1), 0x42200000u,  1, IF2_KNOWN_STR("d*0.005*tanX vs 40 (0x343CEC)", "d*0.005*tanX vs 40 (0x35D7CC)", "d*0.005*tanX vs 40") },
+    { IF2_R(LOD_2), 0x3E4CCCCDu, -1, IF2_KNOWN_STR("r/(d*tanX) vs 0.2 (0x44D364)", "r/(d*tanX) vs 0.2 (0x48C97C)", "r/(d*tanX) vs 0.2") },
+    { IF2_R(LOD_3), 0x3DCCCCCDu, -1, IF2_KNOWN_STR("visprog mode 3: 0.1 (0x2D6368)", "visprog mode 3: 0.1 (0x2EDAC0)", "visprog mode 3: 0.1") },
+#endif
+#if IF2_HAVE_LOD && IF2_HAVE_LOD_QUALITY
     /* 1.04's dynamic-quality table 0x9D7224 (21 x 20 bytes; level = [0xA6E1F0+0x6D0], 0..20, raised while the
      * scene's per-frame display data exceeds 5 MiB): column +0xC is c of the visprog threshold (c*tanX)^2 for
      * the modes other than 3 (0x2ED5DC..0x2ED5FC), the column's only reader; 0 below level 12. 1.00 had no
      * such table (that threshold was 0). Scaled like mode 3's 0.1. */
-    { 0x009D7320u, 0x3D4CCCCDu, -1, "quality level 12: c 0.05 (0x2ED5DC)" },
-    { 0x009D7334u, 0x3DCCCCCDu, -1, "quality level 13: c 0.1 (0x2ED5DC)" },
-    { 0x009D7348u, 0x3E4CCCCDu, -1, "quality level 14: c 0.2 (0x2ED5DC)" },
-    { 0x009D735Cu, 0x3E4CCCCDu, -1, "quality level 15: c 0.2 (0x2ED5DC)" },
-    { 0x009D7370u, 0x3E4CCCCDu, -1, "quality level 16: c 0.2 (0x2ED5DC)" },
-    { 0x009D7384u, 0x3E4CCCCDu, -1, "quality level 17: c 0.2 (0x2ED5DC)" },
-    { 0x009D7398u, 0x3E4CCCCDu, -1, "quality level 18: c 0.2 (0x2ED5DC)" },
-    { 0x009D73ACu, 0x3E4CCCCDu, -1, "quality level 19: c 0.2 (0x2ED5DC)" },
-    { 0x009D73C0u, 0x3E4CCCCDu, -1, "quality level 20: c 0.2 (0x2ED5DC)" },
+    { IF2_R(QUALITY_C12), 0x3D4CCCCDu, -1, IF2_KNOWN_STR("", "quality level 12: c 0.05 (0x2ED5DC)", "quality level 12: c 0.05") },
+    { IF2_R(QUALITY_C13), 0x3DCCCCCDu, -1, IF2_KNOWN_STR("", "quality level 13: c 0.1 (0x2ED5DC)", "quality level 13: c 0.1") },
+    { IF2_R(QUALITY_C14), 0x3E4CCCCDu, -1, IF2_KNOWN_STR("", "quality level 14: c 0.2 (0x2ED5DC)", "quality level 14: c 0.2") },
+    { IF2_R(QUALITY_C15), 0x3E4CCCCDu, -1, IF2_KNOWN_STR("", "quality level 15: c 0.2 (0x2ED5DC)", "quality level 15: c 0.2") },
+    { IF2_R(QUALITY_C16), 0x3E4CCCCDu, -1, IF2_KNOWN_STR("", "quality level 16: c 0.2 (0x2ED5DC)", "quality level 16: c 0.2") },
+    { IF2_R(QUALITY_C17), 0x3E4CCCCDu, -1, IF2_KNOWN_STR("", "quality level 17: c 0.2 (0x2ED5DC)", "quality level 17: c 0.2") },
+    { IF2_R(QUALITY_C18), 0x3E4CCCCDu, -1, IF2_KNOWN_STR("", "quality level 18: c 0.2 (0x2ED5DC)", "quality level 18: c 0.2") },
+    { IF2_R(QUALITY_C19), 0x3E4CCCCDu, -1, IF2_KNOWN_STR("", "quality level 19: c 0.2 (0x2ED5DC)", "quality level 19: c 0.2") },
+    { IF2_R(QUALITY_C20), 0x3E4CCCCDu, -1, IF2_KNOWN_STR("", "quality level 20: c 0.2 (0x2ED5DC)", "quality level 20: c 0.2") },
 #endif
+    { 0u, 0u, 0, nullptr },   /* (end: the LOD items may all be missing on another EBOOT) */
 };
+const LodConst* const kLod = kLodAll;
 
 double g_aspect    = 0.0;   /* effective aspect; 0 = stock (nothing applied) */
 int    g_hud_169   = 0;
@@ -181,9 +187,10 @@ int    g_applied   = 0;
  * W'/(16H/9) once video init applied the aspect (1 at 16:9). */
 double   g_detail  = 1.0;
 double   g_k_wide  = 1.0;
-constexpr int kNLod = (int)(sizeof kLod / sizeof kLod[0]);
-uint32_t g_lod_cur[kNLod];       /* what we last left in each (kLod[].stock until the first apply) */
-int      g_lod_foreign[kNLod];
+constexpr int kNLod = (int)(sizeof kLodAll / sizeof kLodAll[0]) - 1;
+constexpr int kNLodA = kNLod ? kNLod : 1;   /* (array sizes) */
+uint32_t g_lod_cur[kNLodA];      /* what we last left in each (kLod[].stock until the first apply) */
+int      g_lod_foreign[kNLodA];
 bool     g_lod_init = false;
 
 uint32_t f2u(float f)    { uint32_t u; memcpy(&u, &f, 4); return u; }
@@ -324,6 +331,10 @@ int if2_aspect_install(void)
         fprintf(stderr, "[if2-aspect] 16:9 (%s): stock, nothing changed\n", why);
         return 0;
     }
+    if (!IF2_HAVE(ASPECT)) {
+        if2_feature_off("aspect ratio", "the display width / height, safe area or their pool slots");
+        return 0;
+    }
     /* Only this EBOOT: every location still holds its stock value. */
     const uint32_t W0 = vm_read32(kW), H0 = vm_read32(kH);
     if (W0 != 1280 || H0 != 720 || vm_read32(kSlotNoise) != kW || vm_read32(kSlotTexel) != kW ||
@@ -440,9 +451,9 @@ void if2_opt_changed(opt_id id, const char* old_v, const char* new_v, void* user
  * reference, the TOC slot 0x9A10F4); the edition word itself, TITLE_ID and everything derived from them
  * (ratings, splash, DLC, saves, trophies) stay US. docs/NOTES.md 2026-11-11 / 2026-11-12.
  * -----------------------------------------------------------------------*/
-constexpr uint32_t kLangLists = IF2_EA(0x008D09D0, 0x00930A00);   /* {count, list} per edition */
-constexpr uint32_t kLangListUS = IF2_EA(0x006ECE14, 0x00744E44);  /* english french latino brazilian */
-constexpr uint32_t kLangListEU = IF2_EA(0x006ECE24, 0x00744E54);  /* british french ... portuguese russian */
+constexpr uint32_t kLangLists = IF2_R(LANG_LISTS);     /* {count, list} per edition (disc 0x8D09D0) */
+constexpr uint32_t kLangListUS = IF2_R(LANG_LIST_US);   /* english french latino brazilian (disc 0x6ECE14) */
+constexpr uint32_t kLangListEU = IF2_R(LANG_LIST_EU);   /* british french ... portuguese russian (disc 0x6ECE24) */
 
 const opt_def kLangEditionRow =
     { "language_edition", "edition", "options", "system", "System", "Language", "Language edition",
@@ -478,13 +489,48 @@ const opt_def kLanguageEU =
       "Russian",
       0, 0, 0, "auto", "IF2_LANGUAGE", nullptr, IF2_NOPRESET, 0, "cellSysutil", nullptr };
 
+/* A European disc (BCES01143, beta): the game is the European edition itself -- it picks the European list from
+ * its own TITLE_ID -- so there is no Language edition row and the language row offers that list. */
+const opt_def kLanguageEUDisc =
+    { "language", "system_language|lang", "options", "system", "System", "Language", "Language",
+      "The PS3 system language the game sees: menus, subtitles and voices follow it, as on a PS3 set to that "
+      "language. This edition (BCES01143, Europe) has English (UK), French, Italian, German, Spanish, Dutch, Polish, "
+      "Portuguese and Russian; on a PS3 set to another language it plays in English (UK). Auto: the Windows display "
+      "language when it is one of these (US English -> English (UK), Brazilian -> Portuguese), else English (UK). "
+      "Takes effect at the next launch (the game reads it once, at start).",
+      OPT_ENUM, OPT_RESTART, "auto|english_uk|french|italian|german|spanish|dutch|polish|portuguese|russian",
+      "Auto (Windows language)|English (UK)|French|Italian|German|Spanish (Spain)|Dutch|Polish|Portuguese (Portugal)|"
+      "Russian",
+      0, 0, 0, "auto", "IF2_LANGUAGE", nullptr, IF2_NOPRESET, 0, "cellSysutil", nullptr };
+
+/* The UK disc (BCES01144, beta): its edition's list is British English alone, whatever the PS3's language. */
+const opt_def kLanguageUKDisc =
+    { "language", "system_language|lang", "options", "system", "System", "Language", "Language",
+      "This edition (BCES01144, UK) has one language, English (UK): the game plays in it whatever the PS3's "
+      "language is.",
+      OPT_ENUM, OPT_RESTART, "auto|english_uk", "Auto|English (UK)",
+      0, 0, 0, "auto", "IF2_LANGUAGE", nullptr, IF2_NOPRESET, OPT_F_HIDDEN, "cellSysutil", nullptr };
+
 bool g_lang_europe = false;
 
 /* The two rows: the edition first, then `language` with that edition's list (both restart rows, so the list
  * is fixed for the session). A saved language the edition does not offer is not one of the row's values: the
- * store logs it ("is not a value of this setting: ignored") and the row stays at Auto. */
+ * store logs it ("is not a value of this setting: ignored") and the row stays at Auto. Only the US disc has the
+ * edition row: a European disc is that edition already. */
 void if2_language_rows(void)
 {
+    if (!IF2_EDITION_US) {
+        const bool uk = !strcmp(IF2_TITLE_ID, "BCES01144");
+        opt_register(uk ? &kLanguageUKDisc : &kLanguageEUDisc);
+        fprintf(stderr, "[if2-lang] %s (%s): the game's own %s language list; no Language edition setting\n",
+                IF2_TITLE_ID, IF2_EDITION, uk ? "UK" : "European");
+        return;
+    }
+    if (!IF2_HAVE(LANGUAGE_EDITION)) {
+        if2_feature_off("Language edition: Europe", "the language-list table");
+        opt_register(&kLanguageUS);
+        return;
+    }
     opt_register(&kLangEditionRow);
     const opt_id e = opt_find("language_edition");
     g_lang_europe = e >= 0 && opt_i(e) == 1;
@@ -739,6 +785,10 @@ extern "C" int if2_menu_install(void);    /* src/if2_menu.cpp: native entries in
 extern "C" void infamous2_install_overrides(void)
 {
     int n = 0;
+    /* What this build was made from (tools/if2_resolve.py), and what is off because it was not found */
+    fprintf(stderr, "[if2] EBOOT %s (SHA-1 %.12s..., title %s, %s)%s%s\n", IF2_EBOOT_NAME, IF2_EBOOT_SHA1,
+            IF2_TITLE_ID, IF2_EBOOT_KNOWN ? "every title address cross-checked" : "title addresses found by pattern: BETA",
+            IF2_FEATURES_OFF[0] ? "; off on this EBOOT: " : "", IF2_FEATURES_OFF);
 
     /* Overrides go here as bring-up finds them, e.g.
      *   IF2_OVERRIDE("cellGemGetStatus", if2_cellGemGetStatus); n++;
@@ -807,13 +857,13 @@ extern "C" void     if2_checkpoint_ss_loaded(void);            /* src/if2_checkp
 namespace {
 
 /* IF2_DTCLAMP's word and the one beside it that proves this EBOOT (if2_clock.cpp) */
-constexpr uint32_t kClamp15 = IF2_EA(0x0093ACE0u, 0x009A0AD4u);   /* 1/15 */
-constexpr uint32_t kClamp30 = IF2_EA(0x0093ACE8u, 0x009A0ADCu);   /* 1/30, or 1/<IF2_DTCLAMP> */
+constexpr uint32_t kClamp15 = IF2_R(CLAMP15);   /* 1/15 */
+constexpr uint32_t kClamp30 = IF2_R(CLAMP30);   /* 1/30, or 1/<IF2_DTCLAMP> */
 
 struct TitlGuest {
     uint32_t h, w, safe_x, render_w;
     uint32_t slot_noise, slot_texel, slot_fmv, slot_cam;
-    uint32_t lod[kNLod];
+    uint32_t lod[kNLodA];
     uint32_t dt_clamp;
 };
 
@@ -828,7 +878,7 @@ struct TitlState {
     double   g_aspect;
     int      g_hud_169, g_lod, g_texelfix, g_fmv_fit, g_applied;
     double   g_detail, g_k_wide;
-    uint32_t g_lod_cur[kNLod];
+    uint32_t g_lod_cur[kNLodA];
     bool     g_lod_init;
 };
 static_assert(sizeof(TitlState::g_aspect) == sizeof g_aspect && sizeof(TitlState::g_lod) == sizeof g_lod &&
@@ -862,7 +912,7 @@ int titl_capture(ss_writer* w)
 {
     TitlGuest g;
     memset(&g, 0, sizeof g);
-    if (vm_base) {
+    if (vm_base && IF2_HAVE(ASPECT)) {
         g.h = titl_guest32(kH);
         g.w = titl_guest32(kW);
         g.safe_x = titl_guest32(kSafeX);
@@ -871,8 +921,10 @@ int titl_capture(ss_writer* w)
         g.slot_texel = titl_guest32(kSlotTexel);
         g.slot_fmv = titl_guest32(kSlotFmv);
         g.slot_cam = titl_guest32(kSlotCam);
+    }
+    if (vm_base) {
         for (int i = 0; i < kNLod; i++) g.lod[i] = titl_guest32(kLod[i].ea);
-        g.dt_clamp = titl_guest32(kClamp30);
+        if (IF2_HAVE(DTCLAMP)) g.dt_clamp = titl_guest32(kClamp30);
     }
     ss_write_fields(w, &kTitlList);
     ss_write_fields_at(w, &kTitlGuestList, &g);
@@ -954,7 +1006,7 @@ int titl_restore(ss_reader* r)
     memcpy(g_lod_cur, s.g_lod_cur, sizeof g_lod_cur);
     g_lod_init = s.g_lod_init;
     g_fmv_fit = g_aspect > 0.0 && fmv_choice;   /* this session's choice, on the adopted shape */
-    if (std::fabs(g_aspect - before) > 1e-9) {
+    if (std::fabs(g_aspect - before) > 1e-9 && IF2_HAVE(ASPECT)) {
         uint32_t H = titl_guest32(kH);
         const uint32_t W = titl_guest32(kW);
         if (H < 240 || H > 2160) H = 720;
@@ -971,7 +1023,7 @@ int titl_restore(ss_reader* r)
     if (g_lod_init || k != 1.0) if2_lod_apply(false);
 
     /* IF2_DTCLAMP: this run's, whatever the saving run's was */
-    if (titl_guest32(kClamp15) == 0x3D888889u) {
+    if (IF2_HAVE(DTCLAMP) && titl_guest32(kClamp15) == 0x3D888889u) {
         const char* dc = getenv("IF2_DTCLAMP");
         const int hz = (dc && *dc) ? atoi(dc) : 0;
         const uint32_t want = (hz >= 10 && hz <= 30) ? f2u(1.0f / (float)hz) : 0x3D088889u;

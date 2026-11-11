@@ -54,6 +54,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include "if2_version.h"   /* the EBOOT this build lifted (generated/if2_resolved.h) */
 #include <stdlib.h>
 #include <string.h>
 #ifndef _WIN32
@@ -763,10 +764,12 @@ static void harness_guest_caller(uint32_t opd, uint64_t a0, uint64_t a1,
 }
 
 extern "C" void infamous2_install_overrides(void);
-#if defined(IF2_EBOOT_V104) && IF2_EBOOT_V104
+#if IF2_EBOOT_KNOWN && IF2_EBOOT_V104
 #define IF2_BUILD_TEXT "inFamous 2 recomp (BCUS98125 update 1.04), built " __DATE__ " " __TIME__
-#else
+#elif IF2_EBOOT_KNOWN
 #define IF2_BUILD_TEXT "inFamous 2 recomp (BCUS98125 disc), built " __DATE__ " " __TIME__
+#else
+#define IF2_BUILD_TEXT "inFamous 2 recomp (" IF2_EBOOT_NAME "), built " __DATE__ " " __TIME__
 #endif
 
 #ifdef _WIN32
@@ -801,7 +804,7 @@ static const char* play_mode_setup(void)
     char v[MAX_PATH * 2];
     snprintf(v, sizeof v, "%s\\game\\disc", root);
     if (!getenv("PS3_VFS_ROOT")) _putenv_s("PS3_VFS_ROOT", v);
-#if defined(IF2_EBOOT_V104) && IF2_EBOOT_V104
+#if IF2_EBOOT_V104   /* (the layout the resolver saw: a disc-layout EBOOT runs without the update, as on a PS3) */
     /* game\hdd0 holds the title update (and the HDD install beside it); a disc build runs without it, as
      * the disc EBOOT never runs with an update installed on a PS3 (its patch archives are 1.04 data). */
     snprintf(v, sizeof v, "%s\\game\\hdd0", root);
@@ -914,13 +917,19 @@ int main(int argc, char** argv)
         if (!_fullpath(eboot_full, eboot_arg, sizeof eboot_full)) snprintf(eboot_full, sizeof eboot_full, "%s", eboot_arg);
         ss_slots_host sh;
         memset(&sh, 0, sizeof sh);
-        sh.title_id = "BCUS98125";
-#if defined(IF2_EBOOT_V104) && IF2_EBOOT_V104
+        sh.title_id = IF2_TITLE_ID;   /* (savestates\<title id>) */
+#if IF2_EBOOT_KNOWN && IF2_EBOOT_V104
         sh.disc_ver = "01.04";
         sh.build_text = "1.04 " __DATE__ " " __TIME__;
-#else
+#elif IF2_EBOOT_KNOWN
         sh.disc_ver = "02.00";
         sh.build_text = "disc " __DATE__ " " __TIME__;
+#elif IF2_EBOOT_V104
+        sh.disc_ver = "01.04";
+        sh.build_text = "beta " __DATE__ " " __TIME__;
+#else
+        sh.disc_ver = "disc";
+        sh.build_text = "beta disc " __DATE__ " " __TIME__;
 #endif
         sh.eboot_path = eboot_full;
         sh.cont_hash = ppu_cont_hash;

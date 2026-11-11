@@ -15,8 +15,13 @@
 // Command line (all optional; for shortcuts and scripted tests):
 //   --disc <dir> --update <dir> --eboot <EBOOT.elf> --libsre <libsre.prx | RPCS3 folder>   prefill the files dialog
 //   --detect-out <file>     write the prerequisite / game-file / build-state report to <file> and exit
+//   --report-out <file>     write the support report (what "Save report" saves: the EBOOT / libsre identity, the
+//                           resolver's report, the build state, the newest logs' tails; personal paths replaced by
+//                           %USERPROFILE%) to <file> and exit
 //   --update-check-out <file>  ask GitHub for the latest release, write what was understood to <file> and exit
 //   --winget-dry-run        Install buttons log the winget command instead of running it
+//   --mark-built            (scripted tests) record every step whose output exists as done in this folder, as a
+//                           build by the launcher would, and exit
 //   --pretend-missing <ids> show these prerequisites as missing (git,python,cmake,ninja,vs,llvm): UI tests
 // Used by the update itself: --apply-update <plan> (the updater: a temp copy of this exe), --updated <old version>,
 // --update-failed, --update-log <file> (the restarted launcher).
@@ -53,7 +58,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.5";
+        public const string Version = "0.1.6";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -63,8 +68,8 @@ namespace Infamous2Launcher
     // ------------------------------------------------------------------ options
     class Options
     {
-        public string Disc, Update, Eboot, Libsre, DetectOut, UpdateCheckOut, ApplyUpdate, Updated, UpdateLog;
-        public bool WingetDryRun, UpdateFailed;
+        public string Disc, Update, Eboot, Libsre, DetectOut, ReportOut, UpdateCheckOut, ApplyUpdate, Updated, UpdateLog;
+        public bool WingetDryRun, UpdateFailed, MarkBuilt;
         public HashSet<string> PretendMissing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         public static Options Parse(string[] a)
@@ -79,12 +84,14 @@ namespace Infamous2Launcher
                 else if (k == "--eboot") o.Eboot = next();
                 else if (k == "--libsre") o.Libsre = next();
                 else if (k == "--detect-out") o.DetectOut = next();
+                else if (k == "--report-out") o.ReportOut = next();
                 else if (k == "--update-check-out") o.UpdateCheckOut = next();
                 else if (k == "--apply-update") o.ApplyUpdate = next();
                 else if (k == "--updated") o.Updated = next();
                 else if (k == "--update-log") o.UpdateLog = next();
                 else if (k == "--update-failed") o.UpdateFailed = true;
                 else if (k == "--winget-dry-run") o.WingetDryRun = true;
+                else if (k == "--mark-built") o.MarkBuilt = true;
                 else if (k == "--pretend-missing")
                     foreach (var s in next().Split(',')) if (s.Trim().Length > 0) o.PretendMissing.Add(s.Trim());
             }
@@ -191,7 +198,17 @@ namespace Infamous2Launcher
         {
             { "f1c20717d6532dfb27e292a5db6cdf5a3218760b", "BCUS98125 disc EBOOT (1.00)" },
             { "7814ff1a87d7d3d10bd0e9627dc05ac353ed4162", "BCUS98125 update 1.04 EBOOT" },
+            { "4bfff4699fb607fe6864bc54d564c7ecb2324364", "BCES01143 (Europe) EBOOT -- beta" },
         };
+        public const string UsUpdateSha1 = "7814ff1a87d7d3d10bd0e9627dc05ac353ed4162";
+        // The European discs: beta (issue #3). The build finds the game's addresses in their EBOOT by pattern
+        // (tools\if2_resolve.py); an EBOOT not listed above is let through by tools\check_inputs.py when the
+        // game's structure resolves in it.
+        public static readonly Dictionary<string, string> BetaEditions = new Dictionary<string, string>
+        {
+            { "BCES01143", "Europe" }, { "BCES01144", "UK" },
+        };
+        public static bool IsBeta(string id) { return id != null && BetaEditions.ContainsKey(id); }
         // The editions the game knows (its SKU list) -- for the message when a disc is not BCUS98125 (issue #3).
         public static readonly Dictionary<string, string> Editions = new Dictionary<string, string>
         {
@@ -203,8 +220,9 @@ namespace Infamous2Launcher
             string n;
             return (id ?? "?") + (id != null && Editions.TryGetValue(id, out n) ? " (" + n + ")" : " (not an edition this port knows)");
         }
-        public const string Support = "This build supports only the US edition, BCUS98125, with title update 1.04. " +
-            "Russian, German, Italian, Polish and the other European languages are available on a US copy: " +
+        public const string Support = "This build supports the US edition, BCUS98125, with title update 1.04, and as a beta " +
+            "the European editions BCES01143 (Europe) and BCES01144 (UK). " +
+            "Russian, German, Italian, Polish and the other European languages are also available on a US copy: " +
             "PC Settings > System > Language edition: Europe.";
         // tools\check_inputs.py's developer override: an unknown edition / EBOOT is a warning instead.
         public static bool AllowUnknown { get { return Environment.GetEnvironmentVariable("IF2_ALLOW_UNKNOWN_EBOOT") == "1"; } }
@@ -296,11 +314,14 @@ namespace Infamous2Launcher
                        (File.Exists(LibsrePath) || File.Exists(Path.Combine(Root, @"generated\prx\libsre.linked.bin")));
             }
         }
+        // (relative to the folder: a moved or copied install keeps its fingerprints -- issue #5; the steps whose
+        // output names the folder run again through Pipeline.MovedFrom)
         public string Identity()
         {
+            string r = Path.GetFullPath(Root).TrimEnd('\\').ToLowerInvariant() + "\\";
             return string.Join("\n", new[] {
                 Util.Identity(Path.Combine(DiscGame, "PARAM.SFO")), Util.Identity(Path.Combine(UpdateDir, "PARAM.SFO")),
-                Util.Identity(TargetEboot), Util.Identity(LibsrePath) });
+                Util.Identity(TargetEboot), Util.Identity(LibsrePath) }.Select(x => x.Replace(r, "")));
         }
 
         public class Finding { public int Level; public string Text; public Finding(int l, string t) { Level = l; Text = t; } }   // 0 ok, 1 warn, 2 error
@@ -326,6 +347,9 @@ namespace Infamous2Launcher
                         var s = Ps3Files.ParseSfo(sfo);
                         string id; s.TryGetValue("TITLE_ID", out id);
                         if (id == "BCUS98125") f.Add(new Finding(0, "Disc: inFamous 2, BCUS98125 (North America)."));
+                        else if (Ps3Files.IsBeta(id))
+                            f.Add(new Finding(0, "Disc: inFamous 2, " + id + " (" + Ps3Files.BetaEditions[id] + ") -- BETA: European support is new. " +
+                                                 "If anything goes wrong, press Save report and send the file it saves."));
                         else f.Add(new Finding(Ps3Files.AllowUnknown ? 1 : 2, "Disc: this is " + Ps3Files.EditionOf(id) + ". " + Ps3Files.Support));
                         if (!Directory.Exists(Path.Combine(g, "USRDIR"))) f.Add(new Finding(2, "Disc: PS3_GAME has no USRDIR folder."));
                         else discGame = g;
@@ -339,7 +363,7 @@ namespace Infamous2Launcher
             else
             {
                 string sfo = Path.Combine(update, "PARAM.SFO");
-                if (!File.Exists(sfo)) f.Add(new Finding(2, "Update folder: no PARAM.SFO in " + update + " (choose the BCUS98125 folder that holds PARAM.SFO and USRDIR)."));
+                if (!File.Exists(sfo)) f.Add(new Finding(2, "Update folder: no PARAM.SFO in " + update + " (choose the update's folder, named after the disc's title id -- BCUS98125, BCES01143, ... -- that holds PARAM.SFO and USRDIR)."));
                 else
                 {
                     try
@@ -365,14 +389,25 @@ namespace Infamous2Launcher
                 else
                 {
                     string h = Util.Sha1File(e2), name;
+                    long size = new FileInfo(e2).Length;
+                    string discId = null;
+                    try { if (discGame != null) Ps3Files.ParseSfo(Path.Combine(discGame, "PARAM.SFO")).TryGetValue("TITLE_ID", out discId); } catch { }
                     if (Ps3Files.KnownEboots.TryGetValue(h, out name))
                     {
-                        if (h == "7814ff1a87d7d3d10bd0e9627dc05ac353ed4162") f.Add(new Finding(0, "EBOOT: " + name + " (SHA-1 matches)."));
+                        if (h == Ps3Files.UsUpdateSha1) f.Add(new Finding(0, "EBOOT: " + name + " (SHA-1 matches)."));
+                        else if (name.Contains("beta")) f.Add(new Finding(0, "EBOOT: " + name + " (SHA-1 matches); the build finds its addresses by pattern and logs what it found."));
                         else f.Add(new Finding(2, "EBOOT: this is the " + name + "; decrypt the UPDATE's EBOOT.BIN (1.04) instead."));
                     }
+                    else if (Ps3Files.IsBeta(discId))
+                        f.Add(new Finding(1, "EBOOT: SHA-1 " + h.Substring(0, 12) + "... (" + size.ToString("N0", CultureInfo.InvariantCulture) +
+                            " bytes) is not one this launcher knows: step 2 (check) tests whether the game's structure resolves in it, " +
+                            "and stops if it does not (beta)."));
                     else f.Add(new Finding(Ps3Files.AllowUnknown ? 1 : 2, "EBOOT: SHA-1 " + h.Substring(0, 12) + "... is not the BCUS98125 " +
                         "update 1.04 EBOOT (another edition, or a damaged or wrongly decrypted dump): the build's title hooks would not " +
                         "match it. " + Ps3Files.Support));
+                    if (size == 10159776 && h != "f1c20717d6532dfb27e292a5db6cdf5a3218760b")
+                        f.Add(new Finding(1, "EBOOT: it is exactly the size of the US disc EBOOT (1.00), not of update 1.04 (10,605,256 bytes): " +
+                            "if you meant the update's, decrypt the EBOOT.BIN of the update folder's USRDIR (step 2 says which layout its code has)."));
                     ebootPath = e2;
                 }
             }
@@ -397,7 +432,8 @@ namespace Infamous2Launcher
                 {
                     string h = Util.Sha1File(l);
                     if (Ps3Files.KnownLibsre.ContainsKey(h)) f.Add(new Finding(0, "libsre.prx: decrypted, the known version."));
-                    else f.Add(new Finding(1, "libsre.prx: decrypted, another firmware version than the one tested (should work)."));
+                    // (issue #4: this note was read as the cause of a failed build. It is not an error and never stops anything.)
+                    else f.Add(new Finding(0, "libsre.prx: decrypted (firmware build differs from the tested one: this is fine, it does not stop the build)."));
                     libsrePath = l;
                 }
             }
@@ -541,7 +577,8 @@ namespace Infamous2Launcher
             new StepDef("analyze", "Analyze the game's executable", 5, @"analysis\EBOOT.functions.json",
                         @"tools\analyze.sh", @"tools\import_coverage.py", @"tools\code_end.py"),
             new StepDef("lift",    "Translate the PowerPC and SPU code to C++", 18, @"generated\ppu",
-                        @"tools\relift.sh", @"tools\ppu_postlift.py", @"config\ss_cont_list.txt", @"config\ss_cont_list.104.txt"),
+                        @"tools\relift.sh", @"tools\ppu_postlift.py", @"config\ss_cont_list.txt", @"config\ss_cont_list.104.txt",
+                        @"tools\if2_resolve.py", @"tools\if2_items.py", @"config\if2_sigs.json", @"config\if2_contdb.json"),
             new StepDef("libsre",  "Translate the SPURS library (libsre)", 5, @"generated\prx\libsre.linked.bin",
                         @"tools\lift_libsre.sh", @"config\ss_cont_list_libsre.txt"),
             new StepDef("jobs",    "Translate the SPURS jobs", 18, @"generated\spu_jobs",
@@ -587,6 +624,44 @@ namespace Infamous2Launcher
         {
             string m = Path.Combine(root, Steps[i].Marker);
             return File.Exists(m) || Directory.Exists(m);
+        }
+
+        // Issue #5: a folder moved or copied after a build. Two steps leave this folder's absolute path in what they
+        // write -- check (analysis\inputs.json: the EBOOT and libsre) and build (build\CMakeCache.txt, build.ninja) --
+        // so they run again when it changed; the steps between keep their results (nothing they wrote names the
+        // folder). Returns why, or null. recorded = the folder state.ini says the step ran in (null: not recorded).
+        public string MovedFrom(int i, string recorded)
+        {
+            string id = Steps[i].Id;
+            if (id != "check" && id != "build") return null;
+            string here = Path.GetFullPath(root).TrimEnd('\\');
+            if (recorded != null && !string.Equals(recorded.TrimEnd('\\'), here, StringComparison.OrdinalIgnoreCase)) return recorded;
+            try
+            {
+                if (id == "check")
+                {
+                    string j = Path.Combine(root, @"analysis\inputs.json");
+                    if (!File.Exists(j)) return null;
+                    var m = Regex.Match(File.ReadAllText(j), "\"eboot\":\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
+                    if (!m.Success) return null;
+                    string e = Regex.Unescape(m.Groups[1].Value);
+                    int g = e.IndexOf(@"\game\", StringComparison.OrdinalIgnoreCase);
+                    if (g > 0 && !string.Equals(e.Substring(0, g), here, StringComparison.OrdinalIgnoreCase)) return e.Substring(0, g);
+                }
+                else
+                {
+                    string c = Path.Combine(root, @"build\CMakeCache.txt");
+                    if (!File.Exists(c)) return null;
+                    foreach (var l in File.ReadLines(c))
+                        if (l.StartsWith("CMAKE_HOME_DIRECTORY:", StringComparison.Ordinal))
+                        {
+                            string d = l.Substring(l.IndexOf('=') + 1).Replace('/', '\\').TrimEnd('\\');
+                            if (!string.Equals(d, here, StringComparison.OrdinalIgnoreCase)) return d;
+                        }
+                }
+            }
+            catch { }
+            return null;
         }
     }
 
@@ -644,9 +719,9 @@ namespace Infamous2Launcher
             var intro = new Label
             {
                 Left = 16, Top = 12, Width = 790, Height = 92,
-                Text = "This port runs YOUR copy of inFamous 2 (BCUS98125) with title update 1.04. Nothing from the game is included.\r\n" +
+                Text = "This port runs YOUR copy of inFamous 2 (BCUS98125; the European BCES01143 / BCES01144 as a beta) with title update 1.04. Nothing from the game is included.\r\n" +
                        "From your own console and dumps you need: the disc's files (the folder that holds PS3_GAME), the 1.04 update folder " +
-                       "(BCUS98125, holding PARAM.SFO and USRDIR), the update's EBOOT.BIN decrypted with RPCS3 (Utilities > Decrypt PS3 Binaries) " +
+                       "(named after the title id, holding PARAM.SFO and USRDIR), the update's EBOOT.BIN decrypted with RPCS3 (Utilities > Decrypt PS3 Binaries) " +
                        "as EBOOT.elf, and libsre.prx decrypted from your PS3 firmware in RPCS3 (dev_flash\\sys\\external\\libsre.sprx).\r\n" +
                        "The disc folder is linked, not copied; the update (about 230 MB), the EBOOT and libsre are copied into this folder's game\\. " +
                        "Your originals are never changed. See game\\README.md for details."
@@ -654,7 +729,7 @@ namespace Infamous2Launcher
             Controls.Add(intro);
             int y = 112;
             Row("Disc folder (holds PS3_GAME):", tDisc, true, ref y, o.Disc);
-            Row("Update 1.04 folder (BCUS98125 with PARAM.SFO + USRDIR):", tUpd, true, ref y, o.Update);
+            Row("Update 1.04 folder (BCUS98125 / BCES01143 ... with PARAM.SFO + USRDIR):", tUpd, true, ref y, o.Update);
             Row("Decrypted update EBOOT.elf (leave empty if it is in the update's USRDIR):", tEboot, false, ref y, o.Eboot);
             Row("Decrypted libsre.prx (or type the path of your RPCS3 folder, which holds dev_flash):", tLib, false, ref y, o.Libsre);
 
@@ -1482,7 +1557,7 @@ namespace Infamous2Launcher
 
         readonly Label lblFiles = new Label(), lblStep = new Label(), lblElapsed = new Label(), lblHint = new Label();
         readonly Button btnFiles = new Button(), btnMain = new Button(), btnCancel = new Button(), btnRebuild = new Button(),
-                        btnLogs = new Button(), btnFolder = new Button(), btnRecheck = new Button();
+                        btnLogs = new Button(), btnFolder = new Button(), btnRecheck = new Button(), btnReport = new Button();
         readonly LinkLabel lnkOldBuild = new LinkLabel();
         readonly ProgressBar bar = new ProgressBar();
         readonly TextBox txtLog = new TextBox();
@@ -1533,7 +1608,7 @@ namespace Infamous2Launcher
             var Controls = content.Controls;
 
             var title = new Label { Text = "inFamous 2 -- native PC build (static recompilation)", Font = new Font("Segoe UI", 15f, FontStyle.Bold), Left = 14, Top = 10, Width = 780, Height = 32 };
-            var sub = new Label { Text = "Builds a Windows executable from your own copy of the game (BCUS98125, update 1.04) and starts it. No emulator; no game files included.", Left = 16, Top = 44, Width = 830, Height = 20, ForeColor = SystemColors.GrayText };
+            var sub = new Label { Text = "Builds a Windows executable from your own copy of the game (BCUS98125, update 1.04; European copies: beta) and starts it. No emulator; no game files included.", Left = 16, Top = 44, Width = 830, Height = 20, ForeColor = SystemColors.GrayText };
             Controls.Add(title); Controls.Add(sub);
 
             lblVersion.Text = "launcher v" + AppInfo.Version; lblVersion.SetBounds(800, 4, 188, 16); lblVersion.TextAlign = ContentAlignment.TopRight;
@@ -1591,10 +1666,15 @@ namespace Infamous2Launcher
             btnLogs.Click += (s, e) => OpenFolder(Path.Combine(root, "logs"), null);
             btnFolder.Text = "Open game folder"; btnFolder.SetBounds(204, by + 6, 120, 30); btnFolder.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             btnFolder.Click += (s, e) => OpenFolder(root, File.Exists(ExePath) ? ExePath : null);
-            lnkOldBuild.Text = "Play the existing build without updating it"; lnkOldBuild.SetBounds(336, by + 12, 300, 20); lnkOldBuild.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+            btnReport.Text = "Save report"; btnReport.SetBounds(330, by + 6, 96, 30); btnReport.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+            btnReport.Click += (s, e) => SaveReport();
+            new ToolTip().SetToolTip(btnReport, "Saves logs\\" + "report-<date>.txt (eu-report-... for a European copy): your EBOOT and libsre identity, " +
+                                     "what the build found in your EBOOT, the build state and the newest logs' last lines, with your user folder " +
+                                     "replaced by %USERPROFILE%. Attach it to your issue or beta report.");
+            lnkOldBuild.Text = "Play the existing build without updating it"; lnkOldBuild.SetBounds(434, by + 12, 270, 20); lnkOldBuild.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             lnkOldBuild.LinkClicked += (s, e) => LaunchGame();
-            lblHint.SetBounds(336, by + 12, 370, 20); lblHint.Anchor = AnchorStyles.Bottom | AnchorStyles.Left; lblHint.ForeColor = SystemColors.GrayText;
-            Controls.AddRange(new Control[] { btnMain, btnCancel, btnRebuild, btnLogs, btnFolder, lnkOldBuild, lblHint });
+            lblHint.SetBounds(434, by + 12, 272, 20); lblHint.Anchor = AnchorStyles.Bottom | AnchorStyles.Left; lblHint.ForeColor = SystemColors.GrayText;
+            Controls.AddRange(new Control[] { btnMain, btnCancel, btnRebuild, btnLogs, btnFolder, btnReport, lnkOldBuild, lblHint });
             AcceptButton = btnMain;
 
             // the update banner (hidden until the check finds a newer release)
@@ -2031,8 +2111,15 @@ namespace Infamous2Launcher
         {
             fps = pipe.Fingerprints();
             for (int i = 0; i < Pipeline.Steps.Length; i++)
-                if (state.Get("done." + Pipeline.Steps[i].Id) != fps[i] || !pipe.MarkerOk(i)) return i;
+                if (state.Get("done." + Pipeline.Steps[i].Id) != fps[i] || !pipe.MarkerOk(i) || Moved(i) != null) return i;
             return Pipeline.Steps.Length;
+        }
+
+        // the step is up to date but ran in another folder (issue #5): only it runs again, not the ones after it
+        string Moved(int i) { return pipe.MovedFrom(i, state.Get("root." + Pipeline.Steps[i].Id)); }
+        bool OnlyMoved(int i)
+        {
+            return state.Get("done." + Pipeline.Steps[i].Id) == fps[i] && pipe.MarkerOk(i) && Moved(i) != null;
         }
 
         void RefreshUi()
@@ -2042,6 +2129,7 @@ namespace Infamous2Launcher
             {
                 string e = files.TargetEboot, label = "unknown EBOOT";
                 try { string n; if (Ps3Files.KnownEboots.TryGetValue(StateHash(e), out n)) label = n; } catch { }
+                if (label == "unknown EBOOT" && Ps3Files.IsBeta(files.TitleId)) label = files.TitleId + " EBOOT (not known by SHA-1) -- beta";
                 lblFiles.Text = "Disc: " + (state.Get("files.disc") ?? files.DiscGame) + "\r\nEBOOT: " + label +
                                 "    libsre: " + (File.Exists(files.LibsrePath) ? "game\\firmware\\libsre.prx" : "lifted earlier");
                 btnFiles.Text = "Change...";
@@ -2167,12 +2255,20 @@ namespace Infamous2Launcher
             RunStep(runFrom);
         }
 
+        bool stepOnlyMoved;           // the running step runs again only because the folder moved (issue #5)
+        readonly List<string> stepLines = new List<string>();   // the running step's own output (the failure dialog)
+
         void RunStep(int i)
         {
             stepIndex = i; stepFrac = 0; stepStart = DateTime.Now;
             var s = Pipeline.Steps[i];
+            stepOnlyMoved = OnlyMoved(i);
+            lock (qLock) stepLines.Clear();
+            if (stepOnlyMoved)
+                Append("the folder moved (step " + s.Id + " ran in " + Moved(i) + "): running it again here; the steps after it keep their results");
             state.Set("done." + s.Id, null);
-            for (int k = i + 1; k < Pipeline.Steps.Length; k++) state.V.Remove("done." + Pipeline.Steps[k].Id);
+            if (!stepOnlyMoved)
+                for (int k = i + 1; k < Pipeline.Steps.Length; k++) state.V.Remove("done." + Pipeline.Steps[k].Id);
             state.Save();
             lblStep.Text = "Step " + (i + 1) + " of " + Pipeline.Steps.Length + ": " + s.Title;
             Append("");
@@ -2191,8 +2287,8 @@ namespace Infamous2Launcher
             try
             {
                 proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
-                proc.OutputDataReceived += (o, e) => { if (e.Data != null) Enqueue(e.Data); };
-                proc.ErrorDataReceived += (o, e) => { if (e.Data != null) Enqueue(e.Data); };
+                proc.OutputDataReceived += (o, e) => { if (e.Data != null) { lock (qLock) stepLines.Add(e.Data); Enqueue(e.Data); } };
+                proc.ErrorDataReceived += (o, e) => { if (e.Data != null) { lock (qLock) stepLines.Add(e.Data); Enqueue(e.Data); } };
                 proc.Exited += (o, e) => BeginInvoke(new Action(() => StepExited(i)));
                 proc.Start();
                 proc.StandardInput.Close();
@@ -2216,11 +2312,42 @@ namespace Infamous2Launcher
             var s = Pipeline.Steps[i];
             Append("step " + s.Id + " ended with exit code " + code + " after " + Util.Elapsed(DateTime.Now - stepStart));
             if (cancelling) { Finish(false, null); return; }
-            if (code != 0) { Finish(false, "Step " + (i + 1) + " (" + s.Title + ") failed."); return; }
+            if (code != 0)
+            {
+                string first = FirstError();
+                if (first != null) Append("step " + s.Id + " failed; its first error: " + first);
+                Finish(false, "Step " + (i + 1) + " of " + Pipeline.Steps.Length + " (" + s.Id + ": " + s.Title + ") failed" +
+                              (first != null ? ": " + first : "."));
+                return;
+            }
             fps = pipe.Fingerprints();     // a step may create inputs of later ones (e.g. setup the toolkit)
+            state.V["root." + s.Id] = Path.GetFullPath(root).TrimEnd('\\');
             state.Set("done." + s.Id, fps[i]);
-            if (i + 1 < Pipeline.Steps.Length) RunStep(i + 1);
+            int next = stepOnlyMoved ? FirstStale() : i + 1;   // after a moved-only step: the next one that is stale
+            if (next < Pipeline.Steps.Length) RunStep(next);
             else Finish(true, null);
+        }
+
+        // Issue #4: the failure names the failing step's own first error line -- never a note from the file check (an
+        // [ok] / [i] / [!] line, which never stops a build) or a line of an earlier step.
+        static readonly Regex ErrLine = new Regex(@"(^\[x\]|\berror\b|\bERROR\b|FAILED|FATAL|\w+Error:|Traceback|Exception|^fatal|: No such file|not found -- )",
+                                                  RegexOptions.IgnoreCase);
+        static readonly Regex NotErr = new Regex(@"^\s*(\[ok\]|\[i\]|\[!\]|warning\b|-- |\[\d+/\d+\] .*\.(c|cpp|obj)$)|errors?: 0\b|0 errors|error_|_error|Werror|-Wno-error",
+                                                 RegexOptions.IgnoreCase);
+        string FirstError()
+        {
+            List<string> lines;
+            lock (qLock) lines = new List<string>(stepLines);
+            foreach (var l in lines)
+            {
+                string t = l.Trim();
+                if (t.Length == 0 || NotErr.IsMatch(t)) continue;
+                if (t.StartsWith("Traceback")) continue;            // the exception line at its end says what happened
+                if (ErrLine.IsMatch(t)) return t.Length > 300 ? t.Substring(0, 300) + "..." : t;
+            }
+            // nothing that looks like an error: the step's last line
+            for (int k = lines.Count - 1; k >= 0; k--) if (lines[k].Trim().Length > 0) return lines[k].Trim();
+            return null;
         }
 
         void Finish(bool ok, string error)
@@ -2243,7 +2370,8 @@ namespace Infamous2Launcher
                 string t;
                 lock (qLock) t = string.Join("\r\n", tail.Skip(Math.Max(0, tail.Count - 25)));
                 MessageBox.Show(this, error + "\r\n\r\nThe last lines of the log:\r\n\r\n" + t + "\r\n\r\nFull log: " + logPath +
-                                "\r\n\r\nFix the cause and press Retry: the steps that already finished are not run again.",
+                                "\r\n\r\nFix the cause and press Retry: the steps that already finished are not run again. " +
+                                "Asking for help? Press Save report and attach the file it saves.",
                                 "Build failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             else lblStep.Text = "Cancelled. Press \"Continue build\" to go on from the step that was interrupted.";
@@ -2381,6 +2509,157 @@ namespace Infamous2Launcher
             Process.Start("explorer.exe", select != null ? "/select,\"" + select + "\"" : "\"" + dir + "\"");
         }
 
+        // ---------------------------------------------------------- the support report (Save report, --report-out)
+        void SaveReport()
+        {
+            try
+            {
+                string name = (Ps3Files.IsBeta(files.TitleId) ? "eu-report-" : "report-") + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".txt";
+                string path = Path.Combine(root, "logs", name);
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                File.WriteAllText(path, SupportReport(root), new UTF8Encoding(false));
+                Append("report saved: logs\\" + name + " (personal paths replaced by %USERPROFILE%)");
+                OpenFolder(Path.Combine(root, "logs"), path);
+            }
+            catch (Exception ex) { MessageBox.Show(this, "Could not save the report: " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        }
+
+        // The user's folder and name never leave the machine in a report: %USERPROFILE% / %USERNAME% instead.
+        public static string Scrub(string t)
+        {
+            if (t == null) return "";
+            string prof = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!string.IsNullOrEmpty(prof))
+            {
+                t = Regex.Replace(t, Regex.Escape(prof), "%USERPROFILE%", RegexOptions.IgnoreCase);
+                t = Regex.Replace(t, Regex.Escape(prof.Replace('\\', '/')), "%USERPROFILE%", RegexOptions.IgnoreCase);
+                t = Regex.Replace(t, Regex.Escape(prof.Replace('\\', '/').Replace("C:", "/c")), "%USERPROFILE%", RegexOptions.IgnoreCase);
+                t = Regex.Replace(t, Regex.Escape(prof.Replace(@"\", @"\\")), "%USERPROFILE%", RegexOptions.IgnoreCase);   // JSON-escaped
+            }
+            string user = Environment.UserName;
+            if (!string.IsNullOrEmpty(user) && user.Length >= 3)
+                t = Regex.Replace(t, @"(?<=[\\/]Users[\\/]+)" + Regex.Escape(user) + @"(?=[\\/])", "%USERNAME%", RegexOptions.IgnoreCase);
+            string machine = Environment.MachineName;
+            if (!string.IsNullOrEmpty(machine) && machine.Length >= 3)
+                t = Regex.Replace(t, @"\b" + Regex.Escape(machine) + @"\b", "%COMPUTERNAME%", RegexOptions.IgnoreCase);
+            return t;
+        }
+
+        static string[] TailOf(string path, int n)
+        {
+            byte[] b = File.ReadAllBytes(path);
+            string t;
+            if (b.Length >= 2 && b[0] == 0xFF && b[1] == 0xFE) t = Encoding.Unicode.GetString(b, 2, b.Length - 2);
+            else if (b.Length >= 4 && b[1] == 0 && b[3] == 0) t = Encoding.Unicode.GetString(b);   // UTF-16 without BOM
+            else t = Encoding.UTF8.GetString(b);
+            var lines = t.Replace("\r\n", "\n").Split('\n');
+            return lines.Skip(Math.Max(0, lines.Length - n)).ToArray();
+        }
+
+        public static string SupportReport(string root)
+        {
+            var sb = new StringBuilder();
+            Action<string> L = x => sb.Append(x).Append("\r\n");
+            L("inFamous 2 recomp -- support report (launcher v" + AppInfo.Version + ", " + DateTime.Now.ToString("yyyy-MM-dd HH:mm") + ")");
+            L("Send this file with your issue / beta report. Your user folder, user name and computer name are replaced by");
+            L("%USERPROFILE%, %USERNAME% and %COMPUTERNAME%; nothing else personal is in it (read it first if you like).");
+            L("");
+            L("folder: " + root + "  (" + root.Length + " characters)");
+            string folder = FolderProblem(root);
+            L("folder check: " + (folder == null ? "ok" : folder.Replace("\r\n", " ")));
+            L("Windows: " + Environment.OSVersion.VersionString + (Environment.Is64BitOperatingSystem ? ", 64-bit" : "") +
+              "; language " + CultureInfo.CurrentUICulture.Name);
+            L("");
+            L("== your files (analysis\\inputs.json, written by step 2)");
+            var gf = new GameFiles(root);
+            try
+            {
+                var sfo = Ps3Files.ParseSfo(Path.Combine(gf.DiscGame, "PARAM.SFO"));
+                string v;
+                L("disc PARAM.SFO: TITLE_ID " + (sfo.TryGetValue("TITLE_ID", out v) ? v : "?") + ", VERSION " +
+                  (sfo.TryGetValue("VERSION", out v) ? v : "?") + ", APP_VER " + (sfo.TryGetValue("APP_VER", out v) ? v : "?"));
+            }
+            catch (Exception e) { L("disc PARAM.SFO: " + e.Message); }
+            try
+            {
+                var u = Ps3Files.ParseSfo(Path.Combine(gf.UpdateDir, "PARAM.SFO"));
+                string v;
+                L("update PARAM.SFO: APP_VER " + (u.TryGetValue("APP_VER", out v) ? v : "?"));
+            }
+            catch { L("update PARAM.SFO: none in game\\hdd0\\game\\" + gf.TitleId); }
+            try
+            {
+                string e = gf.TargetEboot;
+                if (e != null)
+                {
+                    string h = Util.Sha1File(e), n;
+                    L("EBOOT: " + e.Substring(Math.Min(e.Length, root.Length)).TrimStart('\\') + ", " + new FileInfo(e).Length.ToString("N0", CultureInfo.InvariantCulture) +
+                      " bytes, SHA-1 " + h + (Ps3Files.KnownEboots.TryGetValue(h, out n) ? " (" + n + ")" : " (not known by SHA-1)"));
+                }
+                else L("EBOOT: none found");
+                if (File.Exists(gf.LibsrePath))
+                {
+                    string h = Util.Sha1File(gf.LibsrePath);
+                    L("libsre.prx: SHA-1 " + h + (Ps3Files.KnownLibsre.ContainsKey(h) ? " (the tested one)" : " (another firmware build: fine)"));
+                }
+            }
+            catch (Exception e) { L("files: " + e.Message); }
+            string inputs = Path.Combine(root, @"analysis\inputs.json");
+            if (File.Exists(inputs))
+                foreach (var l in File.ReadAllLines(inputs))
+                    if (!l.Contains("\"LICENSE\"")) L("  " + l);
+            L("");
+            L("== what the build found in your EBOOT (analysis\\resolve_report.txt, written by step 4)");
+            string rep = Path.Combine(root, @"analysis\resolve_report.txt");
+            if (File.Exists(rep)) foreach (var l in File.ReadAllLines(rep)) L(l);
+            else L("(not made yet: step 4, lift, writes it)");
+            L("");
+            L("== build state");
+            if (gf.Present)
+            {
+                var pl = new Pipeline(root, gf);
+                var st = new State(root);
+                var fp = pl.Fingerprints();
+                for (int i = 0; i < Pipeline.Steps.Length; i++)
+                    L("step " + Pipeline.Steps[i].Id + ": " + (st.Get("done." + Pipeline.Steps[i].Id) == fp[i] && pl.MarkerOk(i) ? "up to date" : "to run") +
+                      (pl.MovedFrom(i, st.Get("root." + Pipeline.Steps[i].Id)) != null ? " (the folder moved since)" : ""));
+                if (st.Get("failed") != null) L("last build failed at: " + st.Get("failed"));
+            }
+            else L("game files not set up");
+            L("infamous2.exe: " + (File.Exists(Path.Combine(root, @"build\infamous2.exe")) ?
+              "built " + File.GetLastWriteTime(Path.Combine(root, @"build\infamous2.exe")).ToString("yyyy-MM-dd HH:mm") : "not built"));
+            var logs = new DirectoryInfo(Path.Combine(root, "logs"));
+            if (logs.Exists)
+            {
+                var la = logs.GetFiles("launcher-*.log").OrderByDescending(f => f.LastWriteTimeUtc).FirstOrDefault();
+                if (la != null)
+                {
+                    L("");
+                    L("== the newest launcher log (logs\\" + la.Name + "), last 80 lines");
+                    foreach (var l in TailOf(la.FullName, 80)) L(l);
+                }
+                var runs = logs.GetFiles("run-*.log").Concat(logs.GetFiles("play-*.log")).OrderByDescending(f => f.LastWriteTimeUtc).ToList();
+                if (runs.Count > 0)
+                {
+                    var first = runs.Last();
+                    L("");
+                    L("== the first game log (logs\\" + first.Name + "): its first 60 and last 120 lines");
+                    var all = TailOf(first.FullName, int.MaxValue);
+                    foreach (var l in all.Take(60)) L(l);
+                    if (all.Length > 180) L("[...]");
+                    foreach (var l in all.Skip(Math.Max(60, all.Length - 120))) L(l);
+                    if (runs.Count > 1)
+                    {
+                        L("");
+                        L("== the newest game log (logs\\" + runs[0].Name + "), last 120 lines");
+                        foreach (var l in TailOf(runs[0].FullName, 120)) L(l);
+                    }
+                }
+                else { L(""); L("(no game log yet: the game has not been started)"); }
+            }
+            return Scrub(sb.ToString());
+        }
+
         // ---------------------------------------------------------- --detect-out
         public static string Report(string root, Options o)
         {
@@ -2401,12 +2680,18 @@ namespace Infamous2Launcher
             var gf = new GameFiles(root);
             sb.AppendLine("game files present: " + gf.Present + "  target EBOOT: " + (gf.TargetEboot ?? "none"));
             if (gf.Present)
+                sb.AppendLine("edition: " + Ps3Files.EditionOf(gf.TitleId) + (gf.TitleId == "BCUS98125" ? "" : Ps3Files.IsBeta(gf.TitleId) ? " -- beta" : " -- not supported"));
+            if (gf.Present)
             {
                 var pl = new Pipeline(root, gf);
                 var st = new State(root);
                 var fp = pl.Fingerprints();
                 for (int i = 0; i < Pipeline.Steps.Length; i++)
-                    sb.AppendLine("step " + Pipeline.Steps[i].Id + ": " + (st.Get("done." + Pipeline.Steps[i].Id) == fp[i] && pl.MarkerOk(i) ? "up to date" : "to run"));
+                {
+                    string mv = pl.MovedFrom(i, st.Get("root." + Pipeline.Steps[i].Id));
+                    sb.AppendLine("step " + Pipeline.Steps[i].Id + ": " + (st.Get("done." + Pipeline.Steps[i].Id) == fp[i] && pl.MarkerOk(i) && mv == null ? "up to date" : "to run") +
+                                  (mv != null ? " (its output names another folder: " + mv + ")" : ""));
+                }
             }
             return sb.ToString();
         }
@@ -2452,6 +2737,27 @@ namespace Infamous2Launcher
             // front, with a suggestion, instead of failing late (issue #2). Too deep a folder can also make the
             // launcher's own path handling fail (PathTooLongException), so nothing below runs before this.
             string folder = MainForm.FolderProblem(root);
+            if (o.MarkBuilt)
+            {
+                var gf = new GameFiles(root);
+                if (!gf.Present) return 1;
+                var pl = new Pipeline(root, gf);
+                var st = new State(root);
+                var fp = pl.Fingerprints();
+                for (int i = 0; i < Pipeline.Steps.Length; i++)
+                    if (pl.MarkerOk(i))
+                    {
+                        st.V["done." + Pipeline.Steps[i].Id] = fp[i];
+                        st.V["root." + Pipeline.Steps[i].Id] = Path.GetFullPath(root).TrimEnd('\\');
+                    }
+                st.Save();
+                return 0;
+            }
+            if (o.ReportOut != null)
+            {
+                File.WriteAllText(o.ReportOut, MainForm.SupportReport(root), new UTF8Encoding(false));
+                return 0;
+            }
             if (o.DetectOut != null)
             {
                 string report;

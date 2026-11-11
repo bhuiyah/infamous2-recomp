@@ -309,19 +309,19 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/analysis/inputs.json")
         file(TO_CMAKE_PATH "${_if2_eboot}" _if2_eboot)
         file(RELATIVE_PATH _if2_eboot_rel "${CMAKE_CURRENT_SOURCE_DIR}" "${_if2_eboot}")
     endif()
-    # Which build of the EBOOT that is: the title hooks carry per-version addresses (src/if2_version.h) for
-    # the disc EBOOT and the title update 1.04 only.
-    string(JSON _if2_upd ERROR_VARIABLE _if2_jerr GET "${_if2_inputs}" update_app_ver)
-    if(_if2_jerr OR NOT _if2_upd)
-        message(STATUS "infamous2 hooks: the disc EBOOT (v02.00)")
-    elseif(_if2_upd STREQUAL "01.04")
-        target_compile_definitions(${PROJECT_NAME} PRIVATE IF2_EBOOT_V104=1)
-        message(STATUS "infamous2 hooks: title update 1.04")
-    else()
-        message(FATAL_ERROR "analysis/inputs.json: the lift is of title update ${_if2_upd}; the title hooks have "
-                            "addresses for the disc EBOOT and update 1.04 only (src/if2_version.h). Install 1.04.")
-    endif()
 endif()
+# Where the title hooks' addresses are in that EBOOT: tools/if2_resolve.py (the lift step) found them by code
+# pattern and wrote generated/if2_resolved.h (src/if2_version.h includes it); its report is
+# analysis/resolve_report.txt. No header = a lift from before the resolver: run the lift step again.
+set(_if2_resolved "${CMAKE_CURRENT_SOURCE_DIR}/generated/if2_resolved.h")
+if(NOT EXISTS "${_if2_resolved}")
+    message(FATAL_ERROR "generated/if2_resolved.h is missing: run the lift step again "
+                        "(powershell -File tools\\build.ps1 -Step lift), then build")
+endif()
+file(STRINGS "${_if2_resolved}" _if2_name REGEX "^#define IF2_EBOOT_NAME ")
+string(REGEX REPLACE "^#define IF2_EBOOT_NAME \"(.*)\"$" "\\1" _if2_name "${_if2_name}")
+message(STATUS "infamous2 hooks: ${_if2_name} (generated/if2_resolved.h)")
+target_include_directories(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/generated")
 # C/C++ only, as IF2_PRX_DIR above: string defines never reach rc.exe.
 target_compile_definitions(${PROJECT_NAME} PRIVATE "$<$<COMPILE_LANGUAGE:C,CXX>:IF2_DEFAULT_EBOOT=\"${_if2_eboot_rel}\">")
 

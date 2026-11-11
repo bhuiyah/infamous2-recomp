@@ -70,11 +70,11 @@ extern "C" uint32_t cellGcm_flip_request_count(void);  /* libs/video/cellGcmSys.
 
 namespace {
 
-constexpr uint32_t kClock     = IF2_EA(0x009BFC70u, 0x00A2C500u);   /* the clock object */
+constexpr uint32_t kClock     = IF2_R(CLOCK_OBJ);    /* the clock object (disc 0x9BFC70) */
 constexpr uint32_t kStampLo   = kClock + 0xE4u; /* low word of the u64 stamp at +0xE0 */
-constexpr uint32_t kLoopCount = IF2_EA(0x00A08F90u, 0x00A76F50u);   /* main-loop iterations */
-constexpr uint32_t kClamp15   = IF2_EA(0x0093ACE0u, 0x009A0AD4u);   /* 1/15 */
-constexpr uint32_t kClamp30   = IF2_EA(0x0093ACE8u, 0x009A0ADCu);   /* 1/30 */
+constexpr uint32_t kLoopCount = IF2_R(LOOP_COUNT);   /* main-loop iterations (disc 0xA08F90) */
+constexpr uint32_t kClamp15   = IF2_R(CLAMP15);      /* 1/15 (disc 0x93ACE0) */
+constexpr uint32_t kClamp30   = IF2_R(CLAMP30);      /* 1/30 (disc 0x93ACE8) */
 constexpr double   kTimebase  = 79800000.0;
 
 float f32(uint32_t ea) { const uint32_t u = vm_read32(ea); float f; memcpy(&f, &u, 4); return f; }
@@ -174,6 +174,10 @@ extern "C" int if2_clock_install(void)
     const char* dc = getenv("IF2_DTCLAMP");
     const int clamp_hz = (dc && *dc) ? atoi(dc) : 0;
     if (g_mode <= 0 && clamp_hz <= 0) return 0;
+    if (!IF2_HAVE(DTCLAMP) || (g_mode > 0 && !IF2_HAVE(CLOCKLOG))) {
+        if2_feature_off(IF2_HAVE(DTCLAMP) ? "IF2_CLOCKLOG" : "IF2_DTCLAMP / IF2_CLOCKLOG", "the clock or its clamp");
+        return 0;
+    }
     /* The EBOOT's data is mapped before the overrides are installed. */
     if (vm_read32(kClamp15) != 0x3D888889u || vm_read32(kClamp30) != 0x3D088889u) {
         fprintf(stderr, "[if2-clock] clamp constants not found at 0x%X/0x%X: not %s, off%c",
