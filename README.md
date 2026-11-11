@@ -2,6 +2,8 @@
 
 # inFamous2Recomp
 
+<a href="https://recomplauncher.com/game/infamous2-recomp"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
+
 A native Windows build of Sucker Punch's *inFamous 2* (PlayStation 3, 2011), made by **statically
 recompiling** the game's own PowerPC and SPU code into C++ with the
 [ps3recomp](https://github.com/sp00nznet/ps3recomp) toolkit and compiling that into a Windows

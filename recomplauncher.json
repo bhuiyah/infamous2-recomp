@@ -1,0 +1,17 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "inFamous 2 Recomp",
+  "repo": "bhuiyah/infamous2-recomp",
+  "start": {
+    "program": ["inFamous2Launcher.exe"]
+  },
+  "saves": ["{install}/gamedata/dev_hdd0/home/00000001/savedata"],
+  "folders": {
+    "saves": [{ "path": "{install}/gamedata/dev_hdd0/home/00000001/savedata" }],
+    "logs": [{ "path": "{install}/logs" }]
+  },
+  "actions": [
+    { "id": "logs", "label": "Logs", "help": "Build logs and each play session's issues file.", "open": "logs" }
+  ]
+}
