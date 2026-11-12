@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.16";
+        public const string Version = "0.1.17";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -1817,7 +1817,7 @@ namespace Infamous2Launcher
             btnFolder.Click += (s, e) => OpenFolder(root, File.Exists(ExePath) ? ExePath : null);
             btnReport.Text = "Save report"; btnReport.SetBounds(330, by + 6, 96, 30); btnReport.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             btnReport.Click += (s, e) => SaveReport();
-            new ToolTip().SetToolTip(btnReport, "Saves logs\\" + "report-<date>.txt (eu-report-... for a European copy): your EBOOT and libsre identity, " +
+            new ToolTip().SetToolTip(btnReport, "Saves logs\\" + "report-<date>.txt and a .zip of it with your newest logs (for GitHub) (eu-report-... for a European copy): your EBOOT and libsre identity, " +
                                      "what the build found in your EBOOT, the build state and the newest logs' last lines, with your user folder " +
                                      "replaced by %USERPROFILE%. Attach it to your issue or beta report.");
             lnkOldBuild.Text = "Play the existing build without updating it"; lnkOldBuild.SetBounds(434, by + 12, 270, 20); lnkOldBuild.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
@@ -2787,18 +2787,87 @@ namespace Infamous2Launcher
         }
 
         // ---------------------------------------------------------- the support report (Save report, --report-out)
+        // The report as .txt plus a .zip of it with the newest logs: GitHub refuses .log attachments but takes a .zip.
         void SaveReport()
         {
             try
             {
-                string name = (Ps3Files.IsBeta(files.TitleId) ? "eu-report-" : "report-") + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".txt";
-                string path = Path.Combine(root, "logs", name);
-                Directory.CreateDirectory(Path.GetDirectoryName(path));
-                File.WriteAllText(path, SupportReport(root), new UTF8Encoding(false));
-                Append("report saved: logs\\" + name + " (personal paths replaced by %USERPROFILE%)");
-                OpenFolder(Path.Combine(root, "logs"), path);
+                string name = (Ps3Files.IsBeta(files.TitleId) ? "eu-report-" : "report-") + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                string logs = Path.Combine(root, "logs");
+                Directory.CreateDirectory(logs);
+                string report = SupportReport(root);
+                File.WriteAllText(Path.Combine(logs, name + ".txt"), report, new UTF8Encoding(false));
+                string zip = Path.Combine(logs, name + ".zip");
+                var inside = WriteReportZip(root, zip, name + ".txt", report);
+                Append("report saved: logs\\" + name + ".zip (" + string.Join(", ", inside) + "; personal paths replaced by %USERPROFILE%)");
+                OpenFolder(logs, zip);
+                var r = MessageBox.Show(this,
+                    "Saved logs\\" + name + ".zip with this report and your newest logs:\r\n    " + string.Join("\r\n    ", inside) +
+                    "\r\n\r\nYour user folder, user name and computer name are replaced in them.\r\n\r\n" +
+                    "GitHub takes .zip files (not .log): drag this .zip into a new issue or a comment.\r\n\r\nOpen the project's new-issue page now?",
+                    "Report saved", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                if (r == DialogResult.Yes) OpenUrl("https://github.com/" + AppInfo.Repo + "/issues/new");
             }
             catch (Exception ex) { MessageBox.Show(this, "Could not save the report: " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error); }
+        }
+
+        // report + the newest launcher log, game log (run-* / play-*) and play-session issues file, each scrubbed;
+        // a log over 16 MB keeps its last 16 MB. Returns the names inside.
+        public static List<string> WriteReportZip(string root, string zipPath, string reportName, string report)
+        {
+            var names = new List<string>();
+            var dir = new DirectoryInfo(Path.Combine(root, "logs"));
+            var add = new List<FileInfo>();
+            if (dir.Exists)
+            {
+                Func<IEnumerable<FileInfo>, FileInfo> newest = fs => fs.OrderByDescending(f => f.LastWriteTimeUtc).FirstOrDefault();
+                add.Add(newest(dir.GetFiles("launcher-*.log")));
+                add.Add(newest(dir.GetFiles("run-*.log").Concat(dir.GetFiles("play-*.log"))));
+                add.Add(newest(dir.GetFiles("play-*-issues.txt")));
+            }
+            if (File.Exists(zipPath)) File.Delete(zipPath);
+            using (var fs = new FileStream(zipPath, FileMode.CreateNew))
+            using (var z = new ZipArchive(fs, ZipArchiveMode.Create))
+            {
+                Action<string, string> put = (n, text) =>
+                {
+                    using (var w = new StreamWriter(z.CreateEntry(n, CompressionLevel.Optimal).Open(), new UTF8Encoding(false))) w.Write(text);
+                    names.Add(n);
+                };
+                put(reportName, report);
+                foreach (var f in add)
+                {
+                    if (f == null) continue;
+                    try { put(f.Name, Scrub(ReadLogText(f.FullName, 16 << 20))); }
+                    catch (Exception ex) { put(f.Name + ".unreadable.txt", "could not read " + f.Name + ": " + ex.Message); }
+                }
+            }
+            return names;
+        }
+
+        // A log as text (UTF-16 game logs, UTF-8 the rest), at most its last maxBytes; readable while the game writes it.
+        static string ReadLogText(string path, int maxBytes)
+        {
+            byte[] b;
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            {
+                long start = Math.Max(0, fs.Length - maxBytes);
+                bool utf16 = false;
+                if (fs.Length >= 4)
+                {
+                    var head = new byte[4];
+                    fs.Read(head, 0, 4);
+                    utf16 = (head[0] == 0xFF && head[1] == 0xFE) || (head[1] == 0 && head[3] == 0);
+                }
+                if (utf16 && (start & 1) != 0) start++;
+                if (start == 0 && utf16 && fs.Length >= 2) { fs.Position = 0; var h = new byte[2]; fs.Read(h, 0, 2); start = (h[0] == 0xFF && h[1] == 0xFE) ? 2 : 0; }
+                fs.Position = start;
+                b = new byte[fs.Length - start];
+                int got = 0, n;
+                while (got < b.Length && (n = fs.Read(b, got, b.Length - got)) > 0) got += n;
+                string t = utf16 ? Encoding.Unicode.GetString(b, 0, got & ~1) : Encoding.UTF8.GetString(b, 0, got);
+                return (start > 2 ? "[... the first " + start + " bytes left out ...]\r\n" : "") + t;
+            }
         }
 
         // The user's folder and name never leave the machine in a report: %USERPROFILE% / %USERNAME% instead.
@@ -3473,7 +3542,10 @@ namespace Infamous2Launcher
             }
             if (o.ReportOut != null)
             {
-                File.WriteAllText(o.ReportOut, MainForm.SupportReport(root), new UTF8Encoding(false));
+                string rep = MainForm.SupportReport(root);
+                if (o.ReportOut.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                    MainForm.WriteReportZip(root, o.ReportOut, Path.GetFileNameWithoutExtension(o.ReportOut) + ".txt", rep);
+                else File.WriteAllText(o.ReportOut, rep, new UTF8Encoding(false));
                 return 0;
             }
             if (o.DetectOut != null)
