@@ -1,6 +1,95 @@
 # Bring-up notes
 
 Dated log of what was tried and where each run stopped. Newest first.
+## 2026-11-12 — RL1: RecompLauncher's follow-ups (PR #7): a launcher without its window, real INI defaults, the toolkit download asked first, Recomp Achievements (off)
+launcher (v0.1.8) | recomplauncher.json, tools/setup.ps1, tools/build.ps1, config/display.ini, config/input.ini,
+config/savestates.ini, src/if2_achievements.cpp, src/infamous2_hooks.cpp, CMakeLists.txt, tests/test_if2_achievements.cpp,
+README.md
+- **Asked:** the four suggestions in PR #7 (RecompLauncher support): Easy Setup through a prepare mode, settings on the
+  game's page through real INI defaults, a question before the first-start toolkit download, Recomp Achievements.
+- **What the manifest can say** (recomplauncher.com/schema/recomplauncher.json, the same file as RecompLauncher's
+  docs/recomplauncher.schema.json; docs/DEVELOPERS.md, docs/SETUP-INPUTS.md): `inputs` (named disc / update / dlc /
+  game inputs, a file or a folder each, passed to programs as `{input:id}`; optional ones as `--x={input:x}`, left out
+  when not given), `prepare` (a program run without a window after the inputs are picked; `progress <0..1> <text>`
+  lines; exit 0 = done; `timeout` in s), `config` (ini / toml / json files, keys as Section/Key) with `settings`
+  (choices, sliders, bindings, groups). Not there: firmware / BIOS inputs (SETUP-INPUTS.md rules them out on purpose)
+  and any free-text notes field. So libsre stays manual, said in the prepare step's error and the README.
+- **Without the window** (Headless in the launcher): `--prepare` (the files dialog's check and "Use these files" import,
+  shared code: GameSetup.Import), `--build` (the stale steps through `tools\build.ps1 -Step`, the same state.ini
+  fingerprints, root.* records and logs\launcher-*.log as the window), `--play` (run.ps1 as the window's Play; waits).
+  `--game <folder>` finds the disc, the update, EBOOT.elf and libsre in a folder; `--disc/--update/--eboot/--libsre`
+  win; libsre is also looked for in the RPCS3 folder the update sits in (`..\..\..\dev_flash\sys\external`), then an
+  earlier game\firmware\libsre.prx. Lines: `PROGRESS <step> <n>/<total>`, `progress <f> <text>`, INFO / WARN /
+  `ERROR <msg>` / `OK <what>` / `EXIT <code>`; exit codes 0-8 (README). A Windows-subsystem exe: a pipe it is given is
+  used, otherwise it attaches to the parent console. The window and every old switch are as before (--detect-out of
+  v0.1.7 and v0.1.8 byte-identical on a fresh and on a built folder; --report-out differs only in the version line).
+- **The manifest:** inputs disc + update (folders) + eboot (optional .elf); prepare = `--prepare --disc {input:disc}
+  --update {input:update} --eboot={input:eboot}`, 900 s; start = the launcher's window as before (it builds on the
+  first Play and asks before the toolkit download). config = config\options.ini (the in-game PC Settings' file: it wins
+  over display.ini / input.ini and an update never replaces it, while the shipped INIs are release files an update
+  overwrites); 21 settings in 6 groups. The language rows are left out (their values differ per edition), and so is
+  variable refresh (its menu change also sets vsync, tearing, fps cap and pacing, which a plain key write would not).
+  Validated against the fetched schema with a small draft-07 checker (scratch validate.py; jsonschema is not installed
+  and nothing was downloaded): 0 errors; it also passes RecompLauncher's three examples and catches a planted error set.
+- **INI defaults:** display.ini 11, input.ini 73, savestates.ini 9 lines uncommented, comments kept (map.* examples and
+  the "not yet" save-state lines stay comments). The store (libs/system/options.c resolve): a home-file key that parses
+  is layer 2 (OPT_SRC_HOME) under options.ini (3) and the env (4); its value is the default, so every getter, opt_reset
+  (back to home_val = default), the save (a value equal to the layers below goes back to its "# key = default" line)
+  and the summary ("non-default" compares with the built-in default) behave as before. One visible difference: the PC
+  Settings detail line "Value from" says "display.ini, line N" instead of "Built-in default". The home parsers replace
+  a binding's keys (pad_kbm.h kbm_parse_line), so a written default binding is the same binding.
+  A/B on one build (instA, display/input/savestates via DISPLAY_CONFIG / PAD_CONFIG / SAVESTATES_CONFIG, OPTIONS_CONFIG
+  scratch, 40 s from boot): the [options] lines, the bindings table, hotkeys, mouse / keyboard / controller lines,
+  [ss-slots] policy, [if2-aspect], language and trophy lines are identical; the one settings line that differs is
+  "[display] settings from display.ini: (none)" -> the eleven keys listed (log text only). With a player's options.ini
+  (aspect 21:9, hud 16:9, fmv fill, aa fast, mouse 1.5, rumble 50) both builds took all six from options.ini
+  ("non-default: ... (options.ini:N)") and left the file byte-identical.
+- **The toolkit question:** the window asks before step 1 when external\ps3recomp has no .git (ToolkitAskForm:
+  what, ~15 MB / ~35 MB on disk, from where, why; Continue / Cancel); Cancel returns before anything is written.
+  Continue passes IF2_TOOLKIT_DOWNLOAD=yes to that step. `--build` needs `--yes` (else EXIT 5, nothing changed).
+  build.ps1 asks in its own console (setup.ps1's question would not show through its pipe), `-Yes` skips; setup.ps1
+  run by hand asks the same; without a console and without consent both stop with exit 3. IF2_TOOLKIT_URL overrides
+  the clone source (tests); the default stays GitHub.
+- **Recomp Achievements (github.com/elripalda/RecompAchievements):** a C99 library (rl_achievements, with rcheevos and
+  cJSON) that talks to RecompLauncher over a local pipe (RL_SESSION; one JSON object per line: hello, native, event,
+  unlock, ...; docs/SPEC.md). Three sources: native (the game's own achievements; Xbox 360 today, names read by the
+  launcher), memory (rcheevos rules, hosted lists), events. Licence: own terms (Recomp Achievements License 1.0): free
+  for any game, launchers need written permission. The trophies: TROPHY.TRP (NPWR01730_00) has 52, ids 0-51: 1
+  platinum (0, awarded by the PS3 itself), 2 gold, 9 silver, 40 bronze; 13, 18 and 19 hidden. The HLE
+  (sceNpTrophy.c) really unlocks: it records gamedata/trophies/NPWR01730.json and logs "TROPHY UNLOCKED"; it never
+  awards the platinum (no grade data); GetGameInfo returns placeholder counts. Built: src/if2_achievements.cpp, our own
+  code speaking the documented channel (nothing vendored or downloaded): with options `achievements = 1` ([system];
+  env IF2_ACHIEVEMENTS) and RL_SESSION set, sceNpTrophyRegisterContext / UnlockTrophy are wrapped (called exactly as
+  the dispatcher calls them, r3 kept) and the bridge sends hello (console "ps3", game "infamous2-recomp"), the trophy
+  file's unlocks as native/earlier at registration, and each accepted unlock as native. Off: no row action, no
+  wrapper. Not done: save_loaded / casual (no save-load or save-state-load hook here; save states would need one for
+  Ranked), the platinum. RecompLauncher has no "ps3" console or native list for this game yet: theirs to add.
+- **Tests** (scratch installs made with `git archive` of the working tree; the disc linked read-only as the window does,
+  a junction to an existing game\disc\PS3_GAME; update and libsre copied from another install's game\; the junctions removed
+  with rmdir after; PLAY_ISSUES=0 and OPTIONS_CONFIG in scratch for every game start):
+  - headless: --help 0; an unknown switch 1; --build before any files 2; --prepare with a wrong disc / update / no
+    libsre 2 with one ERROR line each and nothing written; --prepare --disc/--update/--libsre= 0 (junction + copies,
+    state.ini files.*); --prepare --game <folder> 0; libsre found in an RPCS3-style dev_flash beside the update 0;
+    --build without --yes 5 (no file in the folder changed); --build --yes with IF2_TOOLKIT_URL = the local checkout:
+    all 7 steps, 3:47, EXIT 0, 108 progress lines; v0.1.7's --detect-out then says every step is up to date; --build
+    again: "up to date"; after a src change: only step 7 (1:34); --play started and waited for the game (6 runs).
+  - the window: --detect-out of v0.1.7 and v0.1.8 identical (with --disc/--update/--libsre, with --pretend-missing, on
+    a built folder); the question (UI Automation + BM_CLICK, no SendInput): Cancel left the folder's files, state.ini
+    and logs exactly as they were and logged the decline; Continue cloned (from the local checkout) and went on to the
+    next steps; closing mid-build asked and stopped. build.ps1 / setup.ps1 without a console and without -Yes: exit 3,
+    nothing cloned; build.ps1 -Yes cloned.
+  - INI A/B and options.ini: above.
+  - tests/test_if2_achievements.cpp (host): off -> nothing replaced; on without RL_SESSION -> nothing; on -> hello,
+    the trophy file's 44 and 7 as earlier (once), unlocks 12 and 33 as native, a refused unlock (0x8002290B kept in r3)
+    sends nothing, every argument passed through; also with an unbuffered pipe whose server writes first (the first
+    in-game run deadlocked on exactly that: the reader now starts before the hello). In the game with a fake launcher
+    pipe: hello at boot, trophy 44 (seeded in gamedata\trophies) as earlier after RegisterContext, the trophy calls'
+    log lines as with it off; options.ini achievements = 1 without RL_SESSION: one line, nothing replaced. No unlock
+    was triggered in-game (44, the one an earlier test here unlocked, needs climbing a chain-link fence).
+- **Open (the user decides):** start RecompLauncher's Play with our window (as now) or with `--build --yes --play`
+  (no window; a first build of ~4+ min shows only RecompLauncher's spinner, and missing build tools would fail instead
+  of being offered); the achievements bridge, which waits for RecompLauncher to add a PS3 / native list for this game
+  (their side; their licence's launcher clause does not apply to a game).
 ## 2026-11-12 — EU1: European copies as a beta (issue #3): every title address found in the EBOOT by pattern; issues #4 and #5
 EBOOT: BCUS98125 update 1.04 (and the disc EBOOT 1.00) | tools/if2_resolve.py, tools/if2_items.py, config/if2_sigs.json,
 config/if2_contdb.json, tests/test_if2_resolve.py, tests/if2_resolved_test.h, src/if2_version.h and every title source,

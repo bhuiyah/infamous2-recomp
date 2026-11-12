@@ -556,11 +556,14 @@ void if2_language_edition_apply(void)
     fflush(stderr);
 }
 
+extern "C" void if2_achievements_rows(void);   /* src/if2_achievements.cpp */
+
 /* Before if2_aspect_install: registers the rows and logs the store's summary. */
 int if2_options_install(void)
 {
     for (const opt_def& r : kIf2Rows) opt_register(&r);
     if2_language_rows();
+    if2_achievements_rows();     /* src/if2_achievements.cpp: Recomp Achievements (off by default) */
     g_opt_lod = opt_find("lod");
     g_opt_fmv = opt_find("fmv");
     g_opt_detail = opt_find("detail");
@@ -781,6 +784,7 @@ extern "C" int if2_taskgraph_install(void);
 extern "C" int if2_clock_install(void);   /* src/if2_clock.cpp: IF2_CLOCKLOG, the game's frame clock */
 extern "C" int if2_waitev_install(void);  /* src/if2_waitev.cpp: WAIT_EVENTS poll-loop sites */
 extern "C" int if2_menu_install(void);    /* src/if2_menu.cpp: native entries in the game's menus (NATIVE_MENU) */
+extern "C" int if2_achievements_install(void);   /* src/if2_achievements.cpp: trophies -> RecompLauncher */
 
 extern "C" void infamous2_install_overrides(void)
 {
@@ -803,6 +807,7 @@ extern "C" void infamous2_install_overrides(void)
     n += if2_clock_install();        /* IF2_CLOCKLOG: game frame rate / dt / game-time speed; IF2_DTCLAMP */
     n += if2_waitev_install();       /* WAIT_EVENTS: event-driven kicker / WWS barrier waits (M6a) */
     n += if2_menu_install();         /* NATIVE_MENU: Quit Game in the pause menu (the menus' input handler) */
+    n += if2_achievements_install(); /* achievements = 1: trophy unlocks to RecompLauncher (RL_SESSION) */
 
     if (getenv("IF2_VERBOSE"))
         fprintf(stderr, "[infamous2] %d title override(s) installed\n", n);

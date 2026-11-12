@@ -162,8 +162,13 @@ your files changed. **Rebuild** runs every step again; **Open logs** and **Open 
 they say. If a step fails, the launcher shows the end of its log; fix the cause and press **Retry**:
 finished steps are not run again.
 
-The launcher fetches the ps3recomp toolkit from GitHub with git during its first step. You can also
-start the built game directly: double-click `build\infamous2.exe`.
+**The toolkit download.** The first build's first step clones the
+[ps3recomp](https://github.com/sp00nznet/ps3recomp) toolkit (the open-source recompiler and PS3 runtime,
+MIT; about 15 MB, about 35 MB on disk) from GitHub with git, and installs its Python packages with pip.
+Before that the launcher says what it downloads and from where, and asks **Continue** / **Cancel**;
+Cancel changes nothing. `tools\build.ps1` asks the same in its console (`-Yes` skips the question).
+Later builds only fetch a new toolkit version when the port moves to one. You can also start the built
+game directly: double-click `build\infamous2.exe`.
 
 **Updates.** At startup the launcher asks GitHub, in the background, whether a newer release exists
 (one request to `api.github.com`; nothing about you or your PC is sent). If there is one, a banner and a
@@ -173,6 +178,56 @@ needs a rebuild of a few minutes (**Continue build**). You can also extract the 
 by hand. To turn the check off, untick **Check at startup** (or set `INF2L_NO_UPDATE_CHECK=1`);
 **Check for updates** asks on demand. A git clone is updated with `git pull` instead.
 
+## Other launchers and scripts (no window)
+
+`inFamous2Launcher.exe` also runs without its window, for [RecompLauncher](https://recomplauncher.com)'s
+Easy Setup, other launchers and scripts. Any of these switches makes it a command-line program (from a
+console use `start /wait`, or pipe its output, since Windows does not wait for a windowed program):
+
+```bat
+:: check your files and set up game\ exactly as the window's "Use these files" does
+inFamous2Launcher.exe --prepare --game D:\dumps\inFamous2
+inFamous2Launcher.exe --prepare --disc D:\dumps\inFamous2 --update D:\RPCS3\dev_hdd0\game\BCUS98125 ^
+                      --eboot D:\dumps\EBOOT.elf --libsre D:\RPCS3
+:: run the build steps that are not up to date; --yes allows the first build's toolkit download
+inFamous2Launcher.exe --build --yes
+:: start the game once the build is up to date, and wait for it to close
+inFamous2Launcher.exe --play
+```
+
+- `--game <folder>`: a folder holding your files, searched for the disc (a folder with `PS3_GAME`, or
+  `PS3_GAME` itself), the update (`<title id>`, `update`, `hdd0\game\<title id>` or
+  `dev_hdd0\game\<title id>` inside it), `EBOOT.elf` (needed only when the update's `USRDIR` has none) and
+  `libsre.prx` (`libsre.prx`, `firmware\libsre.prx`, or an RPCS3 `dev_flash`). `--disc`, `--update`,
+  `--eboot` and `--libsre` give the parts separately and win. libsre is also found in the RPCS3 folder the
+  update sits in (`<RPCS3>\dev_hdd0\game\BCUS98125` -> `<RPCS3>\dev_flash\sys\external\libsre.prx`), and a
+  `game\firmware\libsre.prx` set up earlier is kept.
+- Several switches run in the order prepare, build, play. Options also take the form `--eboot=<file>`.
+- Output, one line each: `PROGRESS <step> <n>/<total>`, `progress <0..1> <text>` (RecompLauncher's format),
+  `INFO ...`, `WARN ...`, `ERROR <message>`, `OK <what>`, the build steps' own output, and last
+  `EXIT <code>`. The build also writes `logs\launcher-<time>.log` and keeps the same build state as the
+  window, so either can carry on from the other.
+- Exit codes: 0 done, 1 bad command line, 2 game files missing or wrong, 3 setting up `game\` failed,
+  4 build tools missing (the window offers winget installs), 5 the toolkit download needs `--yes`
+  (nothing was changed), 6 a build step failed or was stopped, 7 cannot play (not built, not up to date,
+  the game is already running), 8 the folder cannot be used; once `--play` started the game, the exit
+  code of `tools\run.ps1` (as the window's Play).
+
+**RecompLauncher.** `recomplauncher.json` asks for the disc folder, the 1.04 update folder and
+(optionally) the decrypted `EBOOT.elf`, and runs `--prepare` with them as its setup step; Play opens this
+launcher, which builds on the first start (it asks before the toolkit download) and plays after. **libsre
+stays a manual step there:** RecompLauncher cannot ask for firmware files, so `--prepare` finds your
+decrypted `libsre.prx` itself when the update folder is inside your RPCS3 folder (above), and otherwise
+stops with a message saying to put it at `game\firmware\libsre.prx` in the install folder and run the
+setup again. The game's page also shows the main PC settings (display, graphics, frame rate, audio,
+controls): RecompLauncher writes them to `config\options.ini`, the same file the in-game PC Settings use.
+
+**Recomp Achievements (off by default).** With `achievements = 1` in `config\options.ini` (`[system]`), or
+`IF2_ACHIEVEMENTS=1`, and the game started by RecompLauncher, each trophy the game unlocks is also passed
+to RecompLauncher as an achievement (`src\if2_achievements.cpp`). It needs RecompLauncher to list the
+game's achievements first, which it does not yet; until then leave it off. Trophies are kept in
+`gamedata\trophies` either way.
+
 ## Building by hand
 
 Everything the launcher does is in plain scripts:
@@ -180,6 +235,7 @@ Everything the launcher does is in plain scripts:
 ```bat
 :: your files -> game\  (layout and decryption: game\README.md)
 :: everything: toolkit, check, analyze, lift, libsre, jobs, compile
+:: (the first run asks before it downloads the toolkit; -Yes allows it without asking)
 powershell -ExecutionPolicy Bypass -File tools\build.ps1
 
 :: one step: setup | check | analyze | lift | libsre | jobs | build
@@ -282,7 +338,7 @@ above; **a full playthrough has not been verified yet.** It is a young port; exp
 | `src/` | the port: runner, title hooks, menus, checkpoints, clocks |
 | `tools/` | the pipeline, the run script, diagnostics; `if2_resolve.py` + `if2_items.py` find the title's addresses in your EBOOT (patterns: `config/if2_sigs.json`) |
 | `patches/ps3recomp/` | the changes to the ps3recomp toolkit, applied by `tools/setup.ps1` |
-| `config/` | display, input and save-state settings (`options.ini` is written by the game) |
+| `config/` | display, input and save-state settings, every default written out (`options.ini`, written by the game and RecompLauncher, wins over them) |
 | `docs/` | controllers, save states, ground truth, roadmap, the engineering journal |
 | `game/` | **your** files (git-ignored; see `game/README.md`) |
 

@@ -210,6 +210,7 @@ add_executable(${PROJECT_NAME}
     src/if2_waitev.cpp
     src/if2_ss_title.cpp
     src/if2_png.cpp
+    src/if2_achievements.cpp
     ${PS3RECOMP_SCAFFOLD}
     ${HLE_NID_TABLE}
     ${RECOMP_SOURCES}

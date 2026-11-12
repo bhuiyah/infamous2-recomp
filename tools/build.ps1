@@ -7,7 +7,9 @@
 #
 # Steps, in order (each needs the ones before it):
 #   setup    fetch the pinned ps3recomp toolkit into external\ and apply patches\ps3recomp
-#   check    tools\check_inputs.py: your files in game\ (game\README.md) -> analysis\inputs.json
+#            (the first time a git clone from GitHub, about 15 MB: asked first; -Yes allows it without asking,
+#            and without a console to ask on it is needed -- see tools\setup.ps1)
+#   check   tools\check_inputs.py: your files in game\ (game\README.md) -> analysis\inputs.json
 #   analyze  tools\analyze.sh: functions, imports, SPU images of the EBOOT
 #   lift     tools\relift.sh: PowerPC + SPU code -> C++ in generated\
 #   libsre   tools\lift_libsre.sh: your decrypted firmware libsre.prx (SPURS) -> generated\prx
@@ -31,7 +33,8 @@ param([switch]$BuildOnly, [switch]$Disc,
       [ValidateSet("", "setup", "check", "analyze", "lift", "libsre", "jobs", "build")][string]$Step = "",
       [ValidateSet("", "off", "instrument", "use")][string]$Pgo = "",
       [ValidateSet("", "ppu", "host", "all")][string]$PgoScope = "",
-      [string]$Define = "")
+      [string]$Define = "",
+      [switch]$Yes)
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
 . (Join-Path $PSScriptRoot "python.ps1")
@@ -70,7 +73,23 @@ $ErrorActionPreference = "Continue"
 
 if (Want "setup") {
     Step "setup (toolkit + patches)"
-    & powershell -NoProfile -ExecutionPolicy Bypass -File tools\setup.ps1 2>&1 | ForEach-Object { "$_" }
+    # The first setup clones the toolkit: asked here, in this console (setup.ps1's own question would not show
+    # through the pipe below), unless -Yes or IF2_TOOLKIT_DOWNLOAD=yes (the launcher, after its own question).
+    $sa = @()
+    if (-not (Test-Path "external\ps3recomp\.git") -and -not ($Yes -or $env:IF2_TOOLKIT_DOWNLOAD -eq "yes")) {
+        $url = if ($env:IF2_TOOLKIT_URL) { $env:IF2_TOOLKIT_URL } else { "https://github.com/sp00nznet/ps3recomp.git" }
+        Write-Host "This first build downloads the ps3recomp toolkit -- the open-source static recompiler and PS3 runtime"
+        Write-Host "this port is built with (MIT licence; no game code), about 15 MB -- with git from"
+        Write-Host "    $url"
+        Write-Host "into external\ps3recomp (about 35 MB on disk), and its Python packages with pip."
+        $ok = $false
+        if (-not [Console]::IsInputRedirected -and [Environment]::UserInteractive) {
+            $ok = (Read-Host "Download it now? [y/N]") -match '^\s*(y|yes)\s*$'
+        }
+        if (-not $ok) { Write-Host "Not downloaded; nothing was changed. Run again with -Yes to allow it."; exit 3 }
+    }
+    if ($Yes -or -not (Test-Path "external\ps3recomp\.git")) { $sa = @("-Yes") }
+    & powershell -NoProfile -ExecutionPolicy Bypass -File tools\setup.ps1 @sa 2>&1 | ForEach-Object { "$_" }
     Need ($LASTEXITCODE -eq 0) "setup failed"
 }
 

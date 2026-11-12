@@ -23,9 +23,27 @@
 //   --mark-built            (scripted tests) record every step whose output exists as done in this folder, as a
 //                           build by the launcher would, and exit
 //   --pretend-missing <ids> show these prerequisites as missing (git,python,cmake,ninja,vs,llvm): UI tests
+// Headless (no window; for other launchers such as RecompLauncher, and scripts). Any of --prepare, --build, --play
+// runs without the window, in that order, writing progress lines to stdout (from a console: start /wait, or pipe it):
+//   --prepare               check the game files and set up game\ exactly as the files dialog's "Use these files"
+//                           does (the disc linked, the update, EBOOT and libsre copied). The files come from
+//                           --game <folder> (searched for the disc, the update and libsre) and/or --disc, --update,
+//                           --eboot, --libsre (which win); libsre is also looked for in the RPCS3 folder the update
+//                           sits in, and an earlier game\firmware\libsre.prx is kept
+//   --build                 run the build steps that are not up to date (tools\build.ps1 -Step <id>, as the window)
+//   --yes                   allow the first build's toolkit download (without it --build stops and says what it is)
+//   --play                  start the game (tools\run.ps1) once the build is up to date; waits for it to close
+//   Output lines: "PROGRESS <step> <n>/<total>", "progress <0..1> <text>" (RecompLauncher's prepare format),
+//   "INFO ...", "WARN ...", "ERROR <message>", "OK <what>", the build steps' own output, and last "EXIT <code>".
+//   Exit codes: 0 done, 1 bad command line, 2 game files missing or wrong, 3 setting up game\ failed, 4 build tools
+//   missing, 5 the toolkit download needs --yes, 6 a build step failed (or was stopped), 7 cannot play (not built,
+//   not up to date, the game is running), 8 the folder cannot be used; once --play started the game, the exit code
+//   of tools\run.ps1 (as the window's Play).
+//   Options also take the form --name=value (--eboot=C:\dumps\EBOOT.elf).
 // Used by the update itself: --apply-update <plan> (the updater: a temp copy of this exe), --updated <old version>,
 // --update-failed, --update-log <file> (the restarted launcher).
-// Environment: INF2L_NO_UPDATE_CHECK=1 turns the startup check off. For tests only: INF2L_UPDATE_API=<url> asks
+// Environment: IF2_TOOLKIT_URL=<git url or folder> clones the toolkit from there instead of GitHub (tests).
+// INF2L_NO_UPDATE_CHECK=1 turns the startup check off. For tests only: INF2L_UPDATE_API=<url> asks
 // that URL instead of the GitHub API (and then allows downloads from anywhere it names), INF2L_UPDATE_TEST_FAIL=
 // <release-relative path> makes the updater fail right after writing that file (to exercise the undo).
 using System;
@@ -58,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.7";
+        public const string Version = "0.1.8";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -71,15 +89,30 @@ namespace Infamous2Launcher
         public string Disc, Update, Eboot, Libsre, DetectOut, ReportOut, UpdateCheckOut, ApplyUpdate, Updated, UpdateLog;
         public bool WingetDryRun, UpdateFailed, MarkBuilt;
         public HashSet<string> PretendMissing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        // headless (Headless below)
+        public string Game;
+        public bool Prepare, Build, Play, Yes, Help;
+        public List<string> Unknown = new List<string>();
+        public bool IsHeadless { get { return Prepare || Build || Play; } }
 
         public static Options Parse(string[] a)
         {
             var o = new Options();
             for (int i = 0; i < a.Length; i++)
             {
-                string k = a[i].ToLowerInvariant();
-                Func<string> next = () => (i + 1 < a.Length) ? a[++i] : "";
-                if (k == "--disc") o.Disc = next();
+                string k = a[i], inline = null;
+                // --name=value: what RecompLauncher passes for an optional input ("--eboot={input:eboot}")
+                int eq = k.StartsWith("--") ? k.IndexOf('=') : -1;
+                if (eq > 2) { inline = k.Substring(eq + 1); k = k.Substring(0, eq); }
+                k = k.ToLowerInvariant();
+                Func<string> next = () => inline != null ? inline : (i + 1 < a.Length) ? a[++i] : "";
+                if (k == "--game") o.Game = next();
+                else if (k == "--prepare") o.Prepare = true;
+                else if (k == "--build") o.Build = true;
+                else if (k == "--play") o.Play = true;
+                else if (k == "--yes") o.Yes = true;
+                else if (k == "--help" || k == "-h" || k == "/?") o.Help = true;
+                else if (k == "--disc") o.Disc = next();
                 else if (k == "--update") o.Update = next();
                 else if (k == "--eboot") o.Eboot = next();
                 else if (k == "--libsre") o.Libsre = next();
@@ -93,7 +126,10 @@ namespace Infamous2Launcher
                 else if (k == "--winget-dry-run") o.WingetDryRun = true;
                 else if (k == "--mark-built") o.MarkBuilt = true;
                 else if (k == "--pretend-missing")
+                {
                     foreach (var s in next().Split(',')) if (s.Trim().Length > 0) o.PretendMissing.Add(s.Trim());
+                }
+                else o.Unknown.Add(a[i]);
             }
             if (Environment.GetEnvironmentVariable("INF2L_WINGET_DRYRUN") == "1") o.WingetDryRun = true;
             return o;
@@ -1546,7 +1582,7 @@ namespace Infamous2Launcher
     }
 
     // ------------------------------------------------------------------ main window
-    class MainForm : Form
+    partial class MainForm : Form
     {
         readonly string root;
         readonly Options opts;
@@ -1983,6 +2019,16 @@ namespace Infamous2Launcher
 
         void Import(string discGame, string updDir, string eboot, string libsre)
         {
+            GameSetup.Import(files, state, discGame, updDir, eboot, libsre);
+        }
+    }
+
+    // ------------------------------------------------------------------ setting up game\ (the files dialog's "Use these files", --prepare)
+    static class GameSetup
+    {
+        // libsre null: keep what is there (headless, when the libsre lifted earlier is kept)
+        public static void Import(GameFiles files, State state, string discGame, string updDir, string eboot, string libsre)
+        {
             string game = files.Game;
             Directory.CreateDirectory(Path.Combine(game, "disc"));
             // disc: a junction game\disc\PS3_GAME -> the player's PS3_GAME (read-only use; 15+ GB stays where it is)
@@ -2015,14 +2061,17 @@ namespace Infamous2Launcher
             }
             // libsre
             string lto = files.LibsrePath;
-            Directory.CreateDirectory(Path.GetDirectoryName(lto));
-            if (!string.Equals(Path.GetFullPath(libsre), Path.GetFullPath(lto), StringComparison.OrdinalIgnoreCase))
-                File.Copy(libsre, lto, true);
+            if (libsre != null)
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(lto));
+                if (!string.Equals(Path.GetFullPath(libsre), Path.GetFullPath(lto), StringComparison.OrdinalIgnoreCase))
+                    File.Copy(libsre, lto, true);
+            }
             state.Set("files.disc", full);
             state.Set("files.update", src);
         }
 
-        static void CopyTree(string src, string dst)
+        public static void CopyTree(string src, string dst)
         {
             Directory.CreateDirectory(dst);
             foreach (var d in Directory.GetDirectories(src, "*", SearchOption.AllDirectories))
@@ -2040,7 +2089,10 @@ namespace Infamous2Launcher
                 File.SetAttributes(t, FileAttributes.Normal);
             }
         }
+    }
 
+    partial class MainForm
+    {
         // ---------------------------------------------------------- prerequisites
         void DetectPrereqs()
         {
@@ -2239,6 +2291,20 @@ namespace Infamous2Launcher
                     return;
             }
             catch { }
+            // The first build clones the toolkit (step 1): say what is downloaded, from where, and ask first.
+            // Cancel changes nothing.
+            toolkitOk = false;
+            if (Toolkit.NeedsDownload(root))
+            {
+                using (var ask = new ToolkitAskForm())
+                    if (ask.ShowDialog(this) != DialogResult.OK)
+                    {
+                        Append("the toolkit download was declined: nothing was changed (Build and play asks again)");
+                        return;
+                    }
+                toolkitOk = true;
+                Append("toolkit download allowed: " + Toolkit.Url);
+            }
             runFrom = all ? 0 : FirstStale();
             if (all) foreach (var s in Pipeline.Steps) state.V.Remove("done." + s.Id);
             state.Set("failed", null);
@@ -2255,6 +2321,7 @@ namespace Infamous2Launcher
             RunStep(runFrom);
         }
 
+        bool toolkitOk;               // the player allowed this build's toolkit download (StartBuild)
         bool stepOnlyMoved;           // the running step runs again only because the folder moved (issue #5)
         readonly List<string> stepLines = new List<string>();   // the running step's own output (the failure dialog)
 
@@ -2284,6 +2351,7 @@ namespace Infamous2Launcher
             psi.EnvironmentVariables["PATH"] = Prereqs.ChildPath(prereqs);
             psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
             psi.EnvironmentVariables["NINJA_STATUS"] = "[%f/%t] ";
+            if (toolkitOk && s.Id == "setup") psi.EnvironmentVariables["IF2_TOOLKIT_DOWNLOAD"] = "yes";
             try
             {
                 proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
@@ -2338,6 +2406,11 @@ namespace Infamous2Launcher
         {
             List<string> lines;
             lock (qLock) lines = new List<string>(stepLines);
+            return FirstErrorOf(lines);
+        }
+
+        public static string FirstErrorOf(List<string> lines)
+        {
             foreach (var l in lines)
             {
                 string t = l.Trim();
@@ -2697,6 +2770,418 @@ namespace Infamous2Launcher
         }
     }
 
+    // ------------------------------------------------------------------ the toolkit download (build step 1)
+    static class Toolkit
+    {
+        public const string DefaultUrl = "https://github.com/sp00nznet/ps3recomp.git";
+        // IF2_TOOLKIT_URL: another clone source (tests: a local checkout); tools\setup.ps1 reads the same variable
+        public static string Url
+        {
+            get { string e = Environment.GetEnvironmentVariable("IF2_TOOLKIT_URL"); return string.IsNullOrEmpty(e) ? DefaultUrl : e; }
+        }
+        // step 1 clones it when external\ps3recomp is not a git checkout yet (later builds only fetch a new pin)
+        public static bool NeedsDownload(string root)
+        {
+            string g = Path.Combine(root, @"external\ps3recomp\.git");
+            return !Directory.Exists(g) && !File.Exists(g);
+        }
+        public static string What
+        {
+            get
+            {
+                return "the ps3recomp toolkit -- the open-source static recompiler and PS3 runtime this port is built with " +
+                       "(MIT licence; no game code) -- about 15 MB, cloned with git from " + Url + " into external\\ps3recomp " +
+                       "(about 35 MB on disk). The build runs it on your own files; nothing else is downloaded by this step " +
+                       "besides its Python packages (pip, from its requirements.txt)";
+            }
+        }
+    }
+
+    class ToolkitAskForm : Form
+    {
+        public ToolkitAskForm()
+        {
+            Text = "inFamous 2 -- download the toolkit?";
+            Font = new Font("Segoe UI", 9f);
+            ClientSize = new Size(620, 250);
+            FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; MinimizeBox = false;
+            StartPosition = FormStartPosition.CenterParent;
+            var l = new Label
+            {
+                Left = 16, Top = 14, Width = 588, Height = 180,
+                Text = "The first build downloads " + Toolkit.What + ".\r\n\r\n" +
+                       "Why: the toolkit is what turns your game's PS3 code into a Windows program. It is a separate " +
+                       "open-source project, fetched at the version this port was tested with (ps3recomp.pin) rather " +
+                       "than bundled.\r\n\r\nContinue downloads it and builds; Cancel changes nothing."
+            };
+            var ok = new Button { Text = "Continue", Left = 404, Top = 206, Width = 96, Height = 30, DialogResult = DialogResult.OK };
+            var no = new Button { Text = "Cancel", Left = 508, Top = 206, Width = 96, Height = 30, DialogResult = DialogResult.Cancel };
+            Controls.AddRange(new Control[] { l, ok, no });
+            AcceptButton = ok; CancelButton = no;
+        }
+    }
+
+    // ------------------------------------------------------------------ headless: --prepare, --build, --play
+    static class Headless
+    {
+        public const int Ok = 0, EUsage = 1, EFiles = 2, EImport = 3, ETools = 4, EConsent = 5, EStep = 6, EPlay = 7, EFolder = 8;
+
+        [DllImport("kernel32.dll")] static extern bool AttachConsole(int pid);
+        [DllImport("kernel32.dll")] static extern IntPtr GetStdHandle(int n);
+        [DllImport("kernel32.dll")] static extern uint GetFileType(IntPtr h);
+
+        static readonly object outLock = new object();
+        static StreamWriter log;
+        static Process proc;
+        static volatile bool cancelled;
+
+        // A Windows program has no console: a pipe or file it was given is used as it is; started from a console
+        // without one, it writes to that console (which does not wait for it: start /wait).
+        public static void InitConsole()
+        {
+            IntPtr h = GetStdHandle(-11);
+            if (h == IntPtr.Zero || h == new IntPtr(-1) || GetFileType(h) == 0) AttachConsole(-1);
+            try { Console.SetOut(new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false)) { AutoFlush = true }); } catch { }
+        }
+
+        public static void Say(string line)
+        {
+            lock (outLock)
+            {
+                try { Console.Out.WriteLine(line); } catch { }
+                if (log != null) try { log.WriteLine(line); log.Flush(); } catch { }
+            }
+        }
+        static int Fail(int code, string msg) { Say("ERROR " + msg); Say("EXIT " + code); return code; }
+        static void Progress(string step, int n, int total, double frac, string text)
+        {
+            Say("PROGRESS " + step + " " + n + "/" + total);
+            Say("progress " + Math.Max(0, Math.Min(1, frac)).ToString("0.###", CultureInfo.InvariantCulture) + " " + text);
+        }
+
+        public const string Usage =
+            "inFamous2Launcher.exe [--prepare] [--build] [--yes] [--play] [--game <folder>] [--disc <folder>] [--update <folder>]\r\n" +
+            "                      [--eboot <EBOOT.elf>] [--libsre <libsre.prx | RPCS3 folder>]\r\n" +
+            "  --prepare  check your game files and set up game\\ (as the window's \"Use these files\")\r\n" +
+            "  --build    run the build steps that are not up to date (--yes allows the first build's toolkit download)\r\n" +
+            "  --play     start the game once the build is up to date, and wait for it\r\n" +
+            "Without any of them the launcher opens its window. Exit codes: 0 done, 1 bad command line, 2 game files missing or\r\n" +
+            "wrong, 3 setting up game\\ failed, 4 build tools missing, 5 the toolkit download needs --yes, 6 a build step failed,\r\n" +
+            "7 cannot play, 8 the folder cannot be used; once --play started the game, tools\\run.ps1's exit code.";
+
+        public static int Run(Options o, string root)
+        {
+            InitConsole();
+            Console.CancelKeyPress += (s, e) => { e.Cancel = true; cancelled = true; try { if (proc != null) Util.KillTree(proc.Id); } catch { } };
+            Say("inFamous2Launcher v" + AppInfo.Version + " (no window): " + root);
+            if (o.Unknown.Count > 0) { Say(Usage); return Fail(EUsage, "unknown argument(s): " + string.Join(" ", o.Unknown)); }
+            string folder = MainForm.FolderProblem(root);
+            if (folder != null) return Fail(EFolder, folder.Replace("\r\n", " "));
+            int rc;
+            if (o.Prepare && (rc = Prepare(o, root)) != Ok) return rc;
+            if (o.Build && (rc = Build(o, root)) != Ok) return rc;
+            if (o.Play) return Play(root);
+            Say("EXIT 0");
+            return Ok;
+        }
+
+        static string ExePath(string root) { return Path.Combine(root, @"build\infamous2.exe"); }
+
+        static bool GameRunning(string root)
+        {
+            string exe = ExePath(root);
+            foreach (var p in Process.GetProcessesByName("infamous2"))
+                try { if (string.Equals(p.MainModule.FileName, exe, StringComparison.OrdinalIgnoreCase)) return true; } catch { }
+            return false;
+        }
+
+        // ---------------------------------------------------------- --prepare
+        static bool IsDir(string d) { try { return !string.IsNullOrEmpty(d) && Directory.Exists(d); } catch { return false; } }
+        static string FileIn(string dir, string rel) { string f = Path.Combine(dir, rel); return File.Exists(f) ? f : null; }
+        static IEnumerable<string> SubDirs(string d)
+        {
+            try { return Directory.GetDirectories(d); } catch { return new string[0]; }
+        }
+
+        // --game <folder>: the disc (a folder holding PS3_GAME, or PS3_GAME itself), the update (named after the disc's
+        // title id, beside it or in an RPCS3-style dev_hdd0\game), the EBOOT.elf (only when the update's USRDIR has none)
+        // and libsre (libsre.prx, firmware\libsre.prx, or an RPCS3 dev_flash with the decrypted one). Parts given on their
+        // own (--disc, ...) win.
+        static void Search(string g, ref string disc, ref string upd, ref string eboot, ref string libsre)
+        {
+            if (string.IsNullOrEmpty(disc))
+            {
+                foreach (var c in new[] { g, Path.Combine(g, "disc") }.Concat(SubDirs(g)))
+                    if (FileIn(c, @"PS3_GAME\PARAM.SFO") != null) { disc = c; break; }
+                if (disc == null && string.Equals(Path.GetFileName(g.TrimEnd('\\')), "PS3_GAME", StringComparison.OrdinalIgnoreCase) &&
+                    FileIn(g, "PARAM.SFO") != null)
+                    disc = g;
+            }
+            string tid = "BCUS98125";
+            if (disc != null)
+            {
+                string dg = IsDir(Path.Combine(disc, "PS3_GAME")) ? Path.Combine(disc, "PS3_GAME") : disc;
+                try { string v; if (Ps3Files.ParseSfo(Path.Combine(dg, "PARAM.SFO")).TryGetValue("TITLE_ID", out v) && !string.IsNullOrEmpty(v)) tid = v; } catch { }
+            }
+            if (string.IsNullOrEmpty(upd))
+            {
+                foreach (var c in new[] { Path.Combine(g, tid), Path.Combine(g, "update"), Path.Combine(g, @"update\" + tid),
+                                          Path.Combine(g, @"hdd0\game\" + tid), Path.Combine(g, @"dev_hdd0\game\" + tid),
+                                          Path.Combine(g, @"game\" + tid) })
+                    if (FileIn(c, "PARAM.SFO") != null && IsDir(Path.Combine(c, "USRDIR"))) { upd = c; break; }
+                if (upd == null && string.Equals(Path.GetFileName(g.TrimEnd('\\')), tid, StringComparison.OrdinalIgnoreCase) && FileIn(g, "PARAM.SFO") != null)
+                    upd = g;
+            }
+            if (string.IsNullOrEmpty(eboot) && (upd == null || Ps3Files.FindEboot(Path.Combine(upd, "USRDIR")) == null))
+                eboot = FileIn(g, "EBOOT.elf");
+            if (string.IsNullOrEmpty(libsre))
+                libsre = FileIn(g, "libsre.prx") ?? FileIn(g, @"firmware\libsre.prx") ?? FileIn(g, @"dev_flash\sys\external\libsre.prx");
+        }
+
+        // An update installed in RPCS3 sits in <RPCS3>\dev_hdd0\game\<title id>; RPCS3's Decrypt PS3 Binaries leaves the
+        // decrypted libsre.prx beside the firmware's libsre.sprx in that RPCS3's dev_flash.
+        static string LibsreNear(string upd)
+        {
+            try
+            {
+                string d = IsDir(upd) ? Path.GetFullPath(upd) : null;
+                for (int up = 0; up < 4 && d != null; up++)
+                {
+                    string f = FileIn(d, @"dev_flash\sys\external\libsre.prx");
+                    if (f != null) return f;
+                    d = Path.GetDirectoryName(d);
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        public const string LibsreManual =
+            "Decrypted libsre.prx: not found. It comes from your own PS3 firmware (game\\README.md: RPCS3 > Utilities > Decrypt " +
+            "PS3 Binaries on dev_flash\\sys\\external\\libsre.sprx). Other launchers cannot ask for firmware files, so put it at " +
+            "game\\firmware\\libsre.prx in this folder (or give --libsre <file | RPCS3 folder>) and run the setup again.";
+
+        static int Prepare(Options o, string root)
+        {
+            var files = new GameFiles(root);
+            if (GameRunning(root)) return Fail(EPlay, "the game is running from this folder: close it first");
+            Progress("prepare", 1, 3, 0.05, "Finding your game files");
+            string disc = o.Disc, upd = o.Update, eboot = o.Eboot, libsre = o.Libsre;
+            if (!string.IsNullOrEmpty(o.Game))
+            {
+                if (!IsDir(o.Game)) return Fail(EUsage, "--game: there is no folder " + o.Game);
+                Search(o.Game, ref disc, ref upd, ref eboot, ref libsre);
+            }
+            if (string.IsNullOrEmpty(eboot)) eboot = null;
+            string libsreFrom = string.IsNullOrEmpty(libsre) ? null : "given";
+            if (libsreFrom == null && (libsre = LibsreNear(upd)) != null) libsreFrom = "found beside the update (RPCS3 dev_flash)";
+            bool keepLifted = false;
+            if (libsreFrom == null && File.Exists(files.LibsrePath)) { libsre = files.LibsrePath; libsreFrom = "the one already in game\\firmware"; }
+            if (libsreFrom == null && File.Exists(Path.Combine(root, @"generated\prx\libsre.linked.bin"))) { libsre = null; keepLifted = true; }
+            Say("INFO disc: " + (disc ?? "(not found)"));
+            Say("INFO update: " + (upd ?? "(not found)"));
+            Say("INFO EBOOT.elf: " + (eboot ?? "(the update's USRDIR\\EBOOT.elf)"));
+            Say("INFO libsre.prx: " + (keepLifted ? "none given: keeping the libsre lifted earlier (generated\\prx)" :
+                                       libsreFrom == null ? "(not found)" : libsre + " (" + libsreFrom + ")"));
+
+            Progress("prepare", 2, 3, 0.15, "Checking your game files");
+            string dg, ep, lp;
+            var f = GameFiles.Check(disc ?? "", upd ?? "", eboot, libsre, out dg, out ep, out lp);
+            if (libsre == null && !keepLifted) f.Add(new GameFiles.Finding(2, LibsreManual));
+            foreach (var x in f) Say((x.Level == 0 ? "INFO [ok] " : x.Level == 1 ? "WARN " : "ERROR ") + x.Text);
+            if (f.Any(x => x.Level == 2)) { Say("EXIT " + EFiles); return EFiles; }
+
+            Progress("prepare", 3, 3, 0.3, "Setting up game\\: linking the disc, copying the update (about 230 MB)");
+            try { GameSetup.Import(files, new State(root), dg, upd, ep, keepLifted ? null : lp); }
+            catch (Exception e) { return Fail(EImport, "could not set up game\\: " + e.Message); }
+            Say("progress 1 Your game files are set up");
+            Say("OK prepare: game files set up in game\\ (disc linked from " + dg + ")");
+            return Ok;
+        }
+
+        // ---------------------------------------------------------- --build
+        static int FirstStale(Pipeline pipe, State st, out string[] fps)
+        {
+            fps = pipe.Fingerprints();
+            for (int i = 0; i < Pipeline.Steps.Length; i++)
+                if (st.Get("done." + Pipeline.Steps[i].Id) != fps[i] || !pipe.MarkerOk(i) ||
+                    pipe.MovedFrom(i, st.Get("root." + Pipeline.Steps[i].Id)) != null) return i;
+            return Pipeline.Steps.Length;
+        }
+        static double Weight(int upTo) { double w = 0; for (int i = 0; i < upTo; i++) w += Pipeline.Steps[i].Weight; return w; }
+        static double TotalWeight() { return Weight(Pipeline.Steps.Length); }
+
+        static int Build(Options o, string root)
+        {
+            var files = new GameFiles(root);
+            int total = Pipeline.Steps.Length;
+            if (!files.Present) return Fail(EFiles, "your game files are not set up in game\\ yet: run --prepare first (with --game, or --disc, --update, --eboot and --libsre)");
+            if (GameRunning(root)) return Fail(EPlay, "the game is running from this folder: close it first");
+            var pipe = new Pipeline(root, files);
+            var state = new State(root);
+            string[] fps;
+            int i = FirstStale(pipe, state, out fps);
+            if (i >= total && File.Exists(ExePath(root)))
+            {
+                Progress("build", total, total, 1, "The build is up to date");
+                Say("OK build: up to date");
+                return Ok;
+            }
+            var prereqs = Prereqs.Detect(o);
+            foreach (var p in prereqs) Say("INFO prerequisite " + p.Id + ": " + (p.Ok ? "ok (" + p.Found + ")" : "MISSING"));
+            var miss = prereqs.Where(p => !p.Ok).ToList();
+            if (miss.Count > 0)
+                return Fail(ETools, "build tools missing: " + string.Join("; ", miss.Select(p => p.Name + (p.WingetId != null ? " (" + Prereqs.WingetCommand(p) + ")" : ""))) +
+                                    ". Install them (the launcher's window offers each with winget) and run again.");
+            if (Toolkit.NeedsDownload(root) && !o.Yes)
+                return Fail(EConsent, "the first build downloads " + Toolkit.What + ". Run again with --yes to allow it. Nothing was changed.");
+
+            Directory.CreateDirectory(Path.Combine(root, "logs"));
+            string logPath = Path.Combine(root, "logs", "launcher-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".log");
+            log = new StreamWriter(logPath, false, new UTF8Encoding(false));
+            Say("INFO log file: " + logPath);
+            if (Toolkit.NeedsDownload(root)) Say("INFO toolkit download allowed (--yes): " + Toolkit.Url);
+            state.Set("failed", null);
+            if (i > 0) Say("INFO steps 1-" + i + " are up to date: starting at step " + (i + 1) + " (" + Pipeline.Steps[i].Id + ")");
+            DateTime start = DateTime.Now;
+            try
+            {
+                while (i < total)
+                {
+                    var s = Pipeline.Steps[i];
+                    string moved = pipe.MovedFrom(i, state.Get("root." + s.Id));
+                    bool onlyMoved = state.Get("done." + s.Id) == fps[i] && pipe.MarkerOk(i) && moved != null;
+                    if (onlyMoved) Say("INFO the folder moved (step " + s.Id + " ran in " + moved + "): running it again here; the steps after it keep their results");
+                    state.Set("done." + s.Id, null);
+                    if (!onlyMoved) for (int k = i + 1; k < total; k++) state.V.Remove("done." + Pipeline.Steps[k].Id);
+                    state.Save();
+                    Progress(s.Id, i + 1, total, Weight(i) / TotalWeight(), "Step " + (i + 1) + " of " + total + ": " + s.Title);
+                    Say("===== step " + (i + 1) + "/" + total + ": " + s.Id + " -- " + s.Title + " =====");
+                    DateTime t0 = DateTime.Now;
+                    List<string> lines;
+                    int code = RunStep(root, s, i, prereqs, o.Yes, out lines);
+                    Say("INFO step " + s.Id + " ended with exit code " + code + " after " + Util.Elapsed(DateTime.Now - t0));
+                    if (cancelled) return Fail(EStep, "stopped (Ctrl+C) in step " + (i + 1) + " (" + s.Id + "); finished steps are kept");
+                    if (code != 0)
+                    {
+                        state.Set("failed", s.Id);
+                        string first = MainForm.FirstErrorOf(lines);
+                        return Fail(EStep, "step " + (i + 1) + " of " + total + " (" + s.Id + ": " + s.Title + ") failed" +
+                                           (first != null ? ": " + first : "") + "  (full log: " + logPath + ")");
+                    }
+                    fps = pipe.Fingerprints();
+                    state.V["root." + s.Id] = Path.GetFullPath(root).TrimEnd('\\');
+                    state.Set("done." + s.Id, fps[i]);
+                    i = onlyMoved ? FirstStale(pipe, state, out fps) : i + 1;
+                }
+                Progress("build", total, total, 1, "Built");
+                Say("OK build: finished in " + Util.Elapsed(DateTime.Now - start));
+                return Ok;
+            }
+            finally
+            {
+                lock (outLock) { if (log != null) { log.Dispose(); log = null; } }
+            }
+        }
+
+        static int RunStep(string root, StepDef s, int index, List<Prereq> prereqs, bool yes, out List<string> lines)
+        {
+            var got = new List<string>();
+            lines = got;
+            var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"),
+                "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + Path.Combine(root, @"tools\build.ps1") + "\" -Step " + s.Id)
+            {
+                UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = root,
+                RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true,
+                StandardOutputEncoding = Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage),
+                StandardErrorEncoding = Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage),
+            };
+            psi.EnvironmentVariables["PATH"] = Prereqs.ChildPath(prereqs);
+            psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
+            psi.EnvironmentVariables["NINJA_STATUS"] = "[%f/%t] ";
+            if (yes && s.Id == "setup") psi.EnvironmentVariables["IF2_TOOLKIT_DOWNLOAD"] = "yes";
+            double w0 = Weight(index) / TotalWeight(), w1 = Weight(index + 1) / TotalWeight();
+            int lastPct = -1;
+            DataReceivedEventHandler on = (sender, e) =>
+            {
+                if (e.Data == null) return;
+                lock (got) got.Add(e.Data);
+                Say(e.Data);
+                // ninja's "[n/total]": the build step's own progress
+                var m = Regex.Match(e.Data, @"^\[(\d+)/(\d+)\]");
+                int n, t;
+                if (m.Success && int.TryParse(m.Groups[1].Value, out n) && int.TryParse(m.Groups[2].Value, out t) && t > 0)
+                {
+                    int pct = (int)(100L * n / t);
+                    if (pct != lastPct)
+                    {
+                        lastPct = pct;
+                        Say("progress " + (w0 + (w1 - w0) * n / t).ToString("0.###", CultureInfo.InvariantCulture) + " Step " + (index + 1) +
+                            " of " + Pipeline.Steps.Length + ": " + s.Title + " (" + n + "/" + t + ")");
+                    }
+                }
+            };
+            try
+            {
+                proc = new Process { StartInfo = psi };
+                proc.OutputDataReceived += on;
+                proc.ErrorDataReceived += on;
+                proc.Start();
+                proc.StandardInput.Close();
+                proc.BeginOutputReadLine();
+                proc.BeginErrorReadLine();
+                proc.WaitForExit();
+                int code = proc.ExitCode;
+                proc.Dispose(); proc = null;
+                return code;
+            }
+            catch (Exception ex)
+            {
+                Say("ERROR could not start powershell: " + ex.Message);
+                proc = null;
+                return -1;
+            }
+        }
+
+        // ---------------------------------------------------------- --play
+        static int Play(string root)
+        {
+            var files = new GameFiles(root);
+            if (!File.Exists(ExePath(root))) return Fail(EPlay, "there is no build\\infamous2.exe yet: run --build first");
+            if (files.Present)
+            {
+                string[] fps;
+                int stale = FirstStale(new Pipeline(root, files), new State(root), out fps);
+                if (stale < Pipeline.Steps.Length)
+                    return Fail(EPlay, "the build is not up to date (next: step " + (stale + 1) + ", " + Pipeline.Steps[stale].Id + "): run --build first");
+            }
+            if (GameRunning(root)) return Fail(EPlay, "the game is already running");
+            // as the window's Play: tools\run.ps1, quieter log, the play-session issues file (either set beforehand wins)
+            string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"),
+                "-NoProfile -ExecutionPolicy Bypass -File \"" + Path.Combine(root, @"tools\run.ps1") + "\"")
+            { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = root };
+            if (Environment.GetEnvironmentVariable("PS3_VERBOSE") == null) psi.EnvironmentVariables["PS3_VERBOSE"] = "0";
+            if (Environment.GetEnvironmentVariable("PLAY_ISSUES") == null)
+                psi.EnvironmentVariables["PLAY_ISSUES"] = Path.Combine(root, @"logs\play-" + stamp + "-issues.txt");
+            Directory.CreateDirectory(Path.Combine(root, "logs"));
+            try
+            {
+                using (proc = Process.Start(psi))
+                {
+                    Say("OK play: the game is starting (log: logs\\run-" + stamp + ".log or the next second's); waiting for it to close");
+                    proc.WaitForExit();
+                    int code = proc.ExitCode;
+                    proc = null;
+                    Say("INFO the game closed (exit code " + code + ")");
+                    Say("EXIT " + code);
+                    return code;
+                }
+            }
+            catch (Exception ex) { proc = null; return Fail(EPlay, "could not start the game: " + ex.Message); }
+        }
+    }
+
     static class Program
     {
         static string FindRoot()
@@ -2727,6 +3212,20 @@ namespace Infamous2Launcher
                 return 0;
             }
             string root = FindRoot();
+            if (o.Help)
+            {
+                Headless.InitConsole();
+                Headless.Say(Headless.Usage);
+                return 0;
+            }
+            if (o.IsHeadless)
+            {
+                if (root != null) return Headless.Run(o, root);
+                Headless.InitConsole();
+                Headless.Say("ERROR put inFamous2Launcher.exe in the inFamous 2 recomp folder (the one with tools\\build.ps1 and ps3recomp.pin)");
+                Headless.Say("EXIT 8");
+                return 8;
+            }
             if (root == null)
             {
                 MessageBox.Show("Put inFamous2Launcher.exe in the inFamous 2 recomp folder (the one with tools\\build.ps1 and ps3recomp.pin).",

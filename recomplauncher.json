@@ -3,15 +3,236 @@
   "format": 1,
   "name": "inFamous 2 Recomp",
   "repo": "bhuiyah/infamous2-recomp",
+  "inputs": [
+    {
+      "id": "disc",
+      "label": "Your inFamous 2 disc folder: the one that holds PS3_GAME (BCUS98125, North America; the European BCES01143 / BCES01144 as a beta).",
+      "role": "disc",
+      "formats": [{ "type": "folder" }]
+    },
+    {
+      "id": "update",
+      "label": "Your title update 1.04 folder, named after the disc's title id and holding PARAM.SFO and USRDIR (in RPCS3: dev_hdd0\\game\\BCUS98125).",
+      "role": "update",
+      "formats": [{ "type": "folder" }]
+    },
+    {
+      "id": "eboot",
+      "label": "The update's EBOOT.BIN decrypted with RPCS3 (EBOOT.elf). Leave it out when EBOOT.elf is already in the update folder's USRDIR.",
+      "role": "update",
+      "optional": true,
+      "formats": [{ "type": "file", "extensions": ["elf"] }]
+    }
+  ],
+  "prepare": {
+    "program": ["inFamous2Launcher.exe"],
+    "args": ["--prepare", "--disc", "{input:disc}", "--update", "{input:update}", "--eboot={input:eboot}"],
+    "label": "Checking your files and setting up the game folder",
+    "timeout": 900
+  },
   "start": {
     "program": ["inFamous2Launcher.exe"]
   },
+  "config": [
+    {
+      "id": "main",
+      "format": "ini",
+      "file": [
+        { "path": "{install}/options.ini", "if": "{install}/options.ini" },
+        { "path": "{install}/config/options.ini" }
+      ]
+    }
+  ],
+  "settings": [
+    {
+      "id": "aspect", "label": "Aspect ratio", "group": "Display",
+      "help": "Wider shows more at the sides (same vertical view) with the HUD spread out. Auto follows the monitor when it is wider than 16:9.",
+      "choices": [
+        { "label": "Auto (monitor)", "set": { "display/aspect": "auto" } },
+        { "label": "16:9 (PS3)", "set": { "display/aspect": "off" } },
+        { "label": "21:9", "set": { "display/aspect": "21:9" } },
+        { "label": "64:27 (2560x1080)", "set": { "display/aspect": "64:27" } },
+        { "label": "43:18 (3440x1440)", "set": { "display/aspect": "43:18" } },
+        { "label": "32:9", "set": { "display/aspect": "32:9" } },
+        { "label": "16:10", "set": { "display/aspect": "16:10" } }
+      ],
+      "defaults": { "display/aspect": "auto" }
+    },
+    {
+      "id": "hud", "label": "HUD layout", "group": "Display",
+      "help": "On a wide screen: the HUD in the screen's corners, or where a 16:9 TV shows it.",
+      "choices": [
+        { "label": "Wide", "set": { "display/hud": "wide" } },
+        { "label": "16:9 (PS3)", "set": { "display/hud": "16:9" } }
+      ],
+      "defaults": { "display/hud": "wide" }
+    },
+    {
+      "id": "fmv", "label": "Full-screen movies", "group": "Display",
+      "help": "Fit shows the whole movie at 16:9 with bars at the sides; Fill is the stock crop.",
+      "choices": [
+        { "label": "Fit", "set": { "display/fmv": "fit" } },
+        { "label": "Fill (PS3)", "set": { "display/fmv": "fill" } }
+      ],
+      "defaults": { "display/fmv": "fit" }
+    },
+    {
+      "id": "fullscreen", "label": "Start in fullscreen", "group": "Display",
+      "help": "Borderless fullscreen on the window's monitor. F11 or Alt+Enter switch it while playing.",
+      "choices": [
+        { "label": "Off", "set": { "display/fullscreen": "0" } },
+        { "label": "On", "set": { "display/fullscreen": "1" } }
+      ],
+      "defaults": { "display/fullscreen": "0" }
+    },
+    {
+      "id": "fps_counter", "label": "FPS counter", "group": "Display",
+      "choices": [
+        { "label": "Off", "set": { "overlay/fps_counter": "off" } },
+        { "label": "On", "set": { "overlay/fps_counter": "on" } },
+        { "label": "Detailed", "set": { "overlay/fps_counter": "detailed" } }
+      ],
+      "defaults": { "overlay/fps_counter": "off" }
+    },
+    {
+      "id": "render_scale", "label": "Internal resolution", "group": "Graphics",
+      "help": "What the game draws at. PS3 is the console's own 1280x720; higher needs a faster graphics card.",
+      "choices": [
+        { "label": "PS3 (1280x720)", "set": { "graphics/render_scale": "ps3" } },
+        { "label": "2x (2560x1440)", "set": { "graphics/render_scale": "2" } },
+        { "label": "3x (3840x2160)", "set": { "graphics/render_scale": "3" } },
+        { "label": "4x (5120x2880)", "set": { "graphics/render_scale": "4" } }
+      ],
+      "defaults": { "graphics/render_scale": "ps3" }
+    },
+    {
+      "id": "upscale", "label": "Upscaling", "group": "Graphics",
+      "help": "How the picture is scaled to the window. Off lets Windows stretch it, as before.",
+      "choices": [
+        { "label": "Off (PS3)", "set": { "graphics/upscale": "off" } },
+        { "label": "Bilinear", "set": { "graphics/upscale": "bilinear" } },
+        { "label": "Bicubic", "set": { "graphics/upscale": "bicubic" } },
+        { "label": "Lanczos", "set": { "graphics/upscale": "lanczos" } }
+      ],
+      "defaults": { "graphics/upscale": "off" }
+    },
+    {
+      "id": "aa", "label": "Anti-aliasing", "group": "Graphics",
+      "choices": [
+        { "label": "Off (PS3)", "set": { "graphics/aa": "off" } },
+        { "label": "Fast", "set": { "graphics/aa": "fast" } }
+      ],
+      "defaults": { "graphics/aa": "off" }
+    },
+    {
+      "id": "anisotropy", "label": "Texture filtering", "group": "Graphics",
+      "choices": [
+        { "label": "Game (PS3)", "set": { "graphics/anisotropy": "game" } },
+        { "label": "2x", "set": { "graphics/anisotropy": "2" } },
+        { "label": "4x", "set": { "graphics/anisotropy": "4" } },
+        { "label": "8x", "set": { "graphics/anisotropy": "8" } },
+        { "label": "16x", "set": { "graphics/anisotropy": "16" } }
+      ],
+      "defaults": { "graphics/anisotropy": "game" }
+    },
+    {
+      "id": "shadow_filter", "label": "Shadows", "group": "Graphics",
+      "choices": [
+        { "label": "PS3", "set": { "graphics/shadow_filter": "ps3" } },
+        { "label": "Soft", "set": { "graphics/shadow_filter": "soft" } },
+        { "label": "Softer", "set": { "graphics/shadow_filter": "softer" } }
+      ],
+      "defaults": { "graphics/shadow_filter": "ps3" }
+    },
+    {
+      "id": "detail", "label": "Detail distance", "group": "Graphics",
+      "help": "1.00 is the PS3. Lower: fewer objects and more frames a second; higher: more detail further away, at a CPU cost.",
+      "slider": { "key": "graphics/detail", "min": 0.5, "max": 2.0, "step": 0.05, "format": "%.2f" },
+      "defaults": { "graphics/detail": "1.0" }
+    },
+    {
+      "id": "sharpen", "label": "Sharpening", "group": "Graphics",
+      "slider": { "key": "graphics/sharpen", "min": 0, "max": 100, "step": 5, "format": "%d" },
+      "defaults": { "graphics/sharpen": "0" }
+    },
+    {
+      "id": "vsync", "label": "Vertical sync", "group": "Frame rate",
+      "choices": [
+        { "label": "On", "set": { "performance/vsync": "1" } },
+        { "label": "Off", "set": { "performance/vsync": "0" } }
+      ],
+      "defaults": { "performance/vsync": "1" }
+    },
+    {
+      "id": "fps_cap", "label": "Frame rate limit", "group": "Frame rate",
+      "help": "At most this many frames a second. With vertical sync on, the display's refresh rate is the limit anyway.",
+      "choices": [
+        { "label": "None", "set": { "performance/fps_cap": "0" } },
+        { "label": "30", "set": { "performance/fps_cap": "30" } },
+        { "label": "60", "set": { "performance/fps_cap": "60" } },
+        { "label": "120", "set": { "performance/fps_cap": "120" } }
+      ],
+      "defaults": { "performance/fps_cap": "0" }
+    },
+    {
+      "id": "frame_pacing", "label": "Even frame pacing", "group": "Frame rate",
+      "help": "Locks each frame to whole display refreshes, so frames stay on screen equally long.",
+      "choices": [
+        { "label": "Off", "set": { "performance/frame_pacing": "off" } },
+        { "label": "Auto", "set": { "performance/frame_pacing": "auto" } },
+        { "label": "Auto, at least 30 fps", "set": { "performance/frame_pacing": "auto:30" } }
+      ],
+      "defaults": { "performance/frame_pacing": "off" }
+    },
+    {
+      "id": "volume", "label": "Master volume", "group": "Audio",
+      "slider": { "key": "audio/volume", "min": 0, "max": 100, "step": 5, "format": "%d" },
+      "defaults": { "audio/volume": "100" }
+    },
+    {
+      "id": "mute_unfocused", "label": "Mute in the background", "group": "Audio",
+      "choices": [
+        { "label": "Off", "set": { "audio/mute_unfocused": "0" } },
+        { "label": "On", "set": { "audio/mute_unfocused": "1" } }
+      ],
+      "defaults": { "audio/mute_unfocused": "0" }
+    },
+    {
+      "id": "mouse_sensitivity", "label": "Mouse sensitivity", "group": "Controls",
+      "help": "1.0 is full camera speed at about 5 cm/s on an 800 DPI mouse; lower it for a high-DPI mouse.",
+      "slider": { "key": "mouse/mouse_sensitivity", "min": 0.1, "max": 5, "step": 0.05, "format": "%.2f" },
+      "defaults": { "mouse/mouse_sensitivity": "1.0" }
+    },
+    {
+      "id": "mouse_invert_y", "label": "Invert mouse Y", "group": "Controls",
+      "choices": [
+        { "label": "Off", "set": { "mouse/mouse_invert_y": "0" } },
+        { "label": "On", "set": { "mouse/mouse_invert_y": "1" } }
+      ],
+      "defaults": { "mouse/mouse_invert_y": "0" }
+    },
+    {
+      "id": "rumble", "label": "Controller vibration", "group": "Controls",
+      "slider": { "key": "controller/rumble", "min": 0, "max": 200, "step": 10, "format": "%d" },
+      "defaults": { "controller/rumble": "100" }
+    },
+    {
+      "id": "pause_mode", "label": "Pause while the menu is open", "group": "Controls",
+      "choices": [
+        { "label": "Pause (PS3)", "set": { "system/pause_mode": "system" } },
+        { "label": "Keep running", "set": { "system/pause_mode": "off" } }
+      ],
+      "defaults": { "system/pause_mode": "system" }
+    }
+  ],
   "saves": ["{install}/gamedata/dev_hdd0/home/00000001/savedata"],
   "folders": {
     "saves": [{ "path": "{install}/gamedata/dev_hdd0/home/00000001/savedata" }],
-    "logs": [{ "path": "{install}/logs" }]
+    "logs": [{ "path": "{install}/logs" }],
+    "config": [{ "path": "{install}/config" }]
   },
   "actions": [
-    { "id": "logs", "label": "Logs", "help": "Build logs and each play session's issues file.", "open": "logs" }
+    { "id": "logs", "label": "Logs", "help": "Build logs and each play session's issues file.", "open": "logs" },
+    { "id": "config", "label": "Settings files", "help": "options.ini (where these settings and the in-game PC Settings are saved) and display.ini, input.ini and savestates.ini, with every default written out.", "open": "config" }
   ]
 }
