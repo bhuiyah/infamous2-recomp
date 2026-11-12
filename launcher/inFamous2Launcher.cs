@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.10";
+        public const string Version = "0.1.11";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -230,6 +230,40 @@ namespace Infamous2Launcher
     // ------------------------------------------------------------------ PS3 file checks (the same rules as tools\check_inputs.py)
     static class Ps3Files
     {
+        // Issue #9: an encrypted PS3 disc image (a Redump-style .iso) unpacked with 7-Zip or WinRAR keeps its file
+        // system and PARAM.SFO readable but its data encrypted with the disc key, and the game then sits on a black
+        // screen after the warning. Every game archive of a decrypted copy starts with "PSAR". The game's first run
+        // copies some of them into hdd0\game\<title>_INSTALL, so an install made from encrypted files is encrypted too.
+        public static bool? IsPsar(string path)
+        {
+            try
+            {
+                if (!File.Exists(path)) return null;
+                var b = new byte[4];
+                using (var s = File.OpenRead(path)) if (s.Read(b, 0, 4) < 4) return false;
+                return b[0] == 'P' && b[1] == 'S' && b[2] == 'A' && b[3] == 'R';
+            }
+            catch { return null; }
+        }
+        public static bool DiscDataEncrypted(string discGame)
+        {
+            return discGame != null && IsPsar(Path.Combine(discGame, @"USRDIR\cache\psarc\core.psarc")) == false;
+        }
+        public static string InstallDir(string game, string titleId)
+        {
+            return Path.Combine(game, @"hdd0\game\" + titleId + "_INSTALL");
+        }
+        public static bool InstallEncrypted(string installDir)
+        {
+            return IsPsar(Path.Combine(installDir, @"USRDIR\cache\psarc\install1\infamous1.psarc_s")) == false ||
+                   IsPsar(Path.Combine(installDir, @"USRDIR\cache\psarc\install2\infamous2.psarc_s")) == false;
+        }
+        public const string EncryptedDiscHelp =
+            "Your disc files are still encrypted: the game archives (USRDIR\\cache\\psarc\\*.psarc) don't start with \"PSAR\". " +
+            "This happens when an encrypted disc image (.iso) is unpacked with 7-Zip or WinRAR: the folders look right but the data " +
+            "inside stays encrypted, and the game shows only a black screen after the warning.\r\n\r\n" +
+            "Decrypt the .iso first (PS3Dec with the disc's key, or dump the disc in decrypted / folder form), extract it again, " +
+            "then choose that folder in the launcher's game files (Change game files).";
         public static readonly Dictionary<string, string> KnownEboots = new Dictionary<string, string>
         {
             { "f1c20717d6532dfb27e292a5db6cdf5a3218760b", "BCUS98125 disc EBOOT (1.00)" },
@@ -388,7 +422,11 @@ namespace Infamous2Launcher
                                                  "If anything goes wrong, press Save report and send the file it saves."));
                         else f.Add(new Finding(Ps3Files.AllowUnknown ? 1 : 2, "Disc: this is " + Ps3Files.EditionOf(id) + ". " + Ps3Files.Support));
                         if (!Directory.Exists(Path.Combine(g, "USRDIR"))) f.Add(new Finding(2, "Disc: PS3_GAME has no USRDIR folder."));
-                        else discGame = g;
+                        else
+                        {
+                            discGame = g;
+                            if (Ps3Files.DiscDataEncrypted(g)) f.Add(new Finding(2, "Disc: " + Ps3Files.EncryptedDiscHelp.Replace("\r\n\r\n", " ")));
+                        }
                     }
                     catch (Exception e) { f.Add(new Finding(2, "Disc: PARAM.SFO unreadable (" + e.Message + ").")); }
                 }
@@ -2564,6 +2602,7 @@ namespace Infamous2Launcher
             if (!File.Exists(ExePath)) { MessageBox.Show(this, "There is no build\\infamous2.exe yet.", Text); return; }
             var running = Process.GetProcessesByName("infamous2").Where(p => SameExe(p)).ToList();
             if (running.Count > 0) { MessageBox.Show(this, "The game is already running (process " + running[0].Id + ").", Text); return; }
+            if (!EncryptedDataOk()) return;
             string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
             var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"),
                 "-NoProfile -ExecutionPolicy Bypass -File \"" + Path.Combine(root, @"tools\run.ps1") + "\"")
@@ -2584,6 +2623,31 @@ namespace Infamous2Launcher
             }
             catch (Exception ex) { game = null; MessageBox.Show(this, "Could not start the game: " + ex.Message, Text); }
             RefreshUi();
+        }
+
+        // Issue #9: never start the game on encrypted disc data (a black screen after the warning). An install the
+        // game made from such data earlier is encrypted too: moved aside (never deleted), the game rebuilds it from the
+        // disc files on its next start.
+        bool EncryptedDataOk()
+        {
+            var gf = new GameFiles(root);
+            if (Ps3Files.DiscDataEncrypted(gf.DiscGame))
+            {
+                Append("game files: the disc data is encrypted -- not starting the game (see the message)");
+                MessageBox.Show(this, Ps3Files.EncryptedDiscHelp, Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
+            }
+            string inst = Ps3Files.InstallDir(gf.Game, gf.TitleId);
+            if (!Ps3Files.InstallEncrypted(inst)) return true;
+            string aside = inst + ".encrypted-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            var r = MessageBox.Show(this,
+                "The game's installed data (game\\hdd0\\game\\" + Path.GetFileName(inst) + ") was made from encrypted disc files, " +
+                "so the game can't read it and would show a black screen.\r\n\r\nMove it aside to " + Path.GetFileName(aside) +
+                " and start? The game rebuilds it from your disc files on this start (it takes a few minutes the first time). " +
+                "You can delete the old folder afterwards.", Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            if (r != DialogResult.Yes) return false;
+            try { Directory.Move(inst, aside); Append("moved the encrypted install aside: " + aside); return true; }
+            catch (Exception ex) { MessageBox.Show(this, "Could not move " + inst + ": " + ex.Message, Text); return false; }
         }
 
         bool SameExe(Process p)
@@ -2681,6 +2745,13 @@ namespace Infamous2Launcher
                   (sfo.TryGetValue("VERSION", out v) ? v : "?") + ", APP_VER " + (sfo.TryGetValue("APP_VER", out v) ? v : "?"));
             }
             catch (Exception e) { L("disc PARAM.SFO: " + e.Message); }
+            {
+                var core = Ps3Files.IsPsar(Path.Combine(gf.DiscGame, @"USRDIR\cache\psarc\core.psarc"));
+                string inst = Ps3Files.InstallDir(gf.Game, gf.TitleId);
+                L("disc data (core.psarc): " + (core == null ? "not found" : core == true ? "decrypted (PSAR)" : "ENCRYPTED -- extract a decrypted copy (issue #9)"));
+                L("game install (" + Path.GetFileName(inst) + "): " + (!Directory.Exists(inst) ? "not made yet" :
+                  Ps3Files.InstallEncrypted(inst) ? "ENCRYPTED -- made from encrypted disc files" : "ok"));
+            }
             try
             {
                 var u = Ps3Files.ParseSfo(Path.Combine(gf.UpdateDir, "PARAM.SFO"));
@@ -3188,6 +3259,10 @@ namespace Infamous2Launcher
                     return Fail(EPlay, "the build is not up to date (next: step " + (stale + 1) + ", " + Pipeline.Steps[stale].Id + "): run --build first");
             }
             if (GameRunning(root)) return Fail(EPlay, "the game is already running");
+            if (Ps3Files.DiscDataEncrypted(files.DiscGame)) return Fail(EPlay, Ps3Files.EncryptedDiscHelp.Replace("\r\n\r\n", " "));
+            if (Ps3Files.InstallEncrypted(Ps3Files.InstallDir(files.Game, files.TitleId)))
+                return Fail(EPlay, "game\\hdd0\\game\\" + files.TitleId + "_INSTALL was made from encrypted disc files: press Play in the " +
+                                   "launcher's window once (it offers to move the folder aside), or move it aside yourself");
             // as the window's Play: tools\run.ps1, quieter log, the play-session issues file (either set beforehand wins)
             string stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
             var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe"),
