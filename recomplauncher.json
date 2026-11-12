@@ -3,6 +3,8 @@
   "format": 1,
   "name": "inFamous 2 Recomp",
   "repo": "bhuiyah/infamous2-recomp",
+  "requires": ["start", "setup", "exit_codes", "settings.ini", "settings.choices", "settings.slider", "settings.groups"],
+  "min": "0.90.0-beta.27",
   "inputs": [
     {
       "id": "disc",
@@ -32,6 +34,19 @@
   },
   "start": {
     "program": ["inFamous2Launcher.exe"]
+  },
+  "exit_codes": {
+    "1": "The launcher was started with options it doesn't understand.",
+    "2": "Your game files are missing or not the supported version (inFamous 2 BCUS98125 with update 1.04; European and UK copies as a beta). Check the disc, update and EBOOT you picked.",
+    "3": "The game folder couldn't be set up. Make sure the install folder isn't read-only and has about 20 GB free.",
+    "4": "Build tools are missing. Start the game once from RecompLauncher's Play button: the inFamous 2 launcher lists them and offers to install each one.",
+    "5": "The first build downloads the ps3recomp toolkit from GitHub (about 15 MB) and needs your OK. Start the game with Play and press Continue when asked.",
+    "6": "A build step failed. Open Logs and attach the newest launcher-*.log to an issue on GitHub.",
+    "7": "The game couldn't be started. Open Logs and attach the newest run-*.log to an issue on GitHub.",
+    "8": "This install folder can't be used for building (its path is too long or has letters Windows can't pass to the build tools). Install to a short path such as C:\\Games\\inFamous2Recomp."
+  },
+  "looks": {
+    "graphics": "d3d12"
   },
   "config": [
     {
