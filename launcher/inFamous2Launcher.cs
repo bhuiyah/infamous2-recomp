@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.15";
+        public const string Version = "0.1.16";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -565,7 +565,7 @@ namespace Infamous2Launcher
     // ------------------------------------------------------------------ prerequisites
     class Prereq
     {
-        public string Id, Name, Why, WingetId, WingetArgs, Found, Note;
+        public string Id, Name, Why, WingetId, WingetArgs, Found, Note, Url;   // Url: the download page, when winget fails
         public bool Ok, Outdated;   // Outdated: installed, but too old (Install becomes Update)
     }
 
@@ -578,14 +578,14 @@ namespace Infamous2Launcher
             string o1;
 
             // Git for Windows: build.ps1 runs Git Bash from Program Files; setup.ps1 runs git.
-            var git = new Prereq { Id = "git", Name = "Git for Windows (with Git Bash)", Why = "fetches the toolkit, runs the lift scripts", WingetId = "Git.Git" };
+            var git = new Prereq { Id = "git", Name = "Git for Windows (with Git Bash)", Why = "fetches the toolkit, runs the lift scripts", WingetId = "Git.Git", Url = "https://git-scm.com/download/win" };
             foreach (var b in new[] { Path.Combine(Util.Pf, @"Git\bin\bash.exe"), Path.Combine(Util.Pf86, @"Git\bin\bash.exe") })
                 if (File.Exists(b)) { git.Ok = true; git.Found = b; break; }
             if (!git.Ok) git.Note = "Git Bash must be in Program Files\\Git (the installer's default).";
             list.Add(git);
 
             // Python 3.10+
-            var py = new Prereq { Id = "python", Name = "Python 3.10 or newer", Why = "runs the recompiler (ps3recomp)", WingetId = "Python.Python.3.12" };
+            var py = new Prereq { Id = "python", Name = "Python 3.10 or newer", Why = "runs the recompiler (ps3recomp)", WingetId = "Python.Python.3.12", Url = "https://www.python.org/downloads/windows/" };
             foreach (var c in new[] { new[] { "py", "-3" }, new[] { "python", "" }, new[] { "python3", "" } })
             {
                 string exe = Util.FindOnPath(c[0] + ".exe", path);
@@ -602,7 +602,7 @@ namespace Infamous2Launcher
             // Visual Studio 2022 Build Tools with the C++ tools
             var vs = new Prereq
             {
-                Id = "vs", Name = "Visual Studio 2022 Build Tools (C++)", Why = "the C++ libraries and linker", WingetId = "Microsoft.VisualStudio.2022.BuildTools",
+                Id = "vs", Name = "Visual Studio 2022 Build Tools (C++)", Why = "the C++ libraries and linker", WingetId = "Microsoft.VisualStudio.2022.BuildTools", Url = "https://visualstudio.microsoft.com/visual-cpp-build-tools/",
                 WingetArgs = "--override \"--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended\""
             };
             string vswhere = Path.Combine(Util.Pf86, @"Microsoft Visual Studio\Installer\vswhere.exe");
@@ -615,7 +615,7 @@ namespace Infamous2Launcher
             list.Add(vs);
 
             // CMake and Ninja: on PATH, in their usual folders, or the copies Visual Studio's C++ CMake tools bring.
-            var cm = new Prereq { Id = "cmake", Name = "CMake 3.20 or newer", Why = "configures the build", WingetId = "Kitware.CMake" };
+            var cm = new Prereq { Id = "cmake", Name = "CMake 3.20 or newer", Why = "configures the build", WingetId = "Kitware.CMake", Url = "https://cmake.org/download/" };
             cm.Found = Util.FindOnPath("cmake.exe", path);
             if (cm.Found == null && File.Exists(Path.Combine(Util.Pf, @"CMake\bin\cmake.exe"))) cm.Found = Path.Combine(Util.Pf, @"CMake\bin\cmake.exe");
             if (cm.Found == null && vsDir != null)
@@ -626,7 +626,7 @@ namespace Infamous2Launcher
             cm.Ok = cm.Found != null;
             list.Add(cm);
 
-            var nj = new Prereq { Id = "ninja", Name = "Ninja", Why = "runs the compiler on every core", WingetId = "Ninja-build.Ninja" };
+            var nj = new Prereq { Id = "ninja", Name = "Ninja", Why = "runs the compiler on every core", WingetId = "Ninja-build.Ninja", Url = "https://github.com/ninja-build/ninja/releases/latest" };
             nj.Found = Util.FindOnPath("ninja.exe", path);
             if (nj.Found == null)
             {
@@ -644,7 +644,7 @@ namespace Infamous2Launcher
             // LLVM 19+: clang-cl 18 and older leave the AVX2 / AVX-512 intrinsic headers out of <immintrin.h>
             // in MSVC mode unless the whole file is built for that CPU, so the runtime's per-function
             // target("avx512...") paths fail with "unknown type name '__m512i'" (issue #8, clang 18.1.8).
-            var llvm = new Prereq { Id = "llvm", Name = "LLVM 19 or newer (clang-cl)", Why = "the compiler", WingetId = "LLVM.LLVM" };
+            var llvm = new Prereq { Id = "llvm", Name = "LLVM 19 or newer (clang-cl)", Why = "the compiler", WingetId = "LLVM.LLVM", Url = "https://github.com/llvm/llvm-project/releases/latest" };
             string cl = Path.Combine(Util.Pf, @"LLVM\bin\clang-cl.exe");
             if (File.Exists(cl))
             {
@@ -2243,7 +2243,7 @@ namespace Infamous2Launcher
             string winget = Prereqs.WingetExe();
             if (winget == null)
             {
-                MessageBox.Show(this, "winget (App Installer) is not available on this PC.\r\n\r\nInstall " + p.Name + " yourself, then press \"Check again\".", Text);
+                OfferManualInstall(p, "winget (App Installer) is not available on this PC.");
                 return;
             }
             var ok = MessageBox.Show(this,
@@ -2255,21 +2255,41 @@ namespace Infamous2Launcher
             if (ok != DialogResult.OK) { Append("install of " + p.Id + " declined"); return; }
             if (opts.WingetDryRun) { Append("[dry run] would run: " + cmd); return; }
             Append("running: " + cmd);
+            string how = null;
             try
             {
+                // /v:on: !ERRORLEVEL! is winget's code (%ERRORLEVEL% would be read before winget runs), and cmd
+                // exits with it after the pause, so the log has the real code.
                 var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"),
-                    "/c \"" + cmd + " & echo. & echo winget finished with exit code %ERRORLEVEL%. & pause\"") { UseShellExecute = false };
+                    "/v:on /c \"" + cmd + " & set \"E=!ERRORLEVEL!\" & echo. & echo winget finished with exit code !E!. & pause & exit !E!\"") { UseShellExecute = false };
                 using (var pr = Process.Start(psi))
                 {
                     Enabled = false;
                     while (!pr.WaitForExit(200)) Application.DoEvents();
                     Enabled = true;
-                    Append("winget exited with " + pr.ExitCode);
+                    Append("winget exited with " + pr.ExitCode + (pr.ExitCode != 0 ? " (0x" + pr.ExitCode.ToString("X8") + ")" : ""));
+                    if (pr.ExitCode != 0) how = "winget failed (exit code 0x" + pr.ExitCode.ToString("X8") + ").";
                 }
             }
-            catch (Exception ex) { Enabled = true; Append("winget failed to start: " + ex.Message); }
+            catch (Exception ex) { Enabled = true; Append("winget failed to start: " + ex.Message); how = "winget could not be started (" + ex.Message + ")."; }
             DetectPrereqs();
             RefreshUi();
+            var now = prereqs.FirstOrDefault(q => q.Id == p.Id);
+            if (now != null && !now.Ok)
+                OfferManualInstall(now, how ?? (now.Outdated ? "winget finished, but the old version is still the one found." : "winget finished, but it is still not found."));
+        }
+
+        // winget is missing or failed (a broken winget source, a policy, no Store): point the player at the download page.
+        void OfferManualInstall(Prereq p, string why)
+        {
+            Append("manual install offered for " + p.Id + ": " + why);
+            if (p.Url == null) { MessageBox.Show(this, why + "\r\n\r\nInstall " + p.Name + " yourself, then press \"Check again\".", Text); return; }
+            var r = MessageBox.Show(this, why + "\r\n\r\nYou can install " + p.Name + " yourself instead:\r\n\r\n    " + p.Url +
+                (p.Id == "llvm" ? "\r\n\r\nPick LLVM-<version>-win64.exe (version 19 or newer) and keep the default folder (Program Files\\LLVM)." :
+                 p.Id == "git" ? "\r\n\r\nKeep the default folder (Program Files\\Git)." :
+                 p.Id == "vs" ? "\r\n\r\nIn the installer, tick \"Desktop development with C++\"." : "") +
+                "\r\n\r\nThen press \"Check again\". Open that page now?", "Install " + p.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+            if (r == DialogResult.Yes) OpenUrl(p.Url);
         }
 
         // ---------------------------------------------------------- UI state
