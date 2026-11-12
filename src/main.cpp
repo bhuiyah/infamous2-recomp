@@ -881,6 +881,78 @@ static void overlay_host_for_hooks(void)
     fprintf(stderr, "[ovl] %s: the options menu and notices are drawn into the game's picture "
                     "(OVL_HOST=backbuffer; OVL_HOST=composition keeps the separate layer)\n", why);
 }
+
+/* The first start copies about 2.5 GB from the disc into game\hdd0\game\BCUS98125_INSTALL (as the PS3
+ * does); the screen stays dark until the splash movie, and the full copy takes a few minutes. Players
+ * took that for a black-screen hang and closed the game (issues #9, #13). While the install's two
+ * archives are missing or still growing, a notice says what is going on. Normal starts: nothing. */
+extern "C" void ovl_notice(const char* utf8, unsigned ms);   /* include/ps3emu/overlay.h */
+
+static char s_install_dir[MAX_PATH * 2];
+
+static long long install_bytes(int* complete)
+{
+    static const char* const k_parts[] = { "install1\\infamous1.psarc_s", "install2\\infamous2.psarc_s" };
+    long long total = 0;
+    *complete = 1;
+    for (const char* part : k_parts) {
+        char p[MAX_PATH * 2];
+        snprintf(p, sizeof p, "%s\\USRDIR\\cache\\psarc\\%s", s_install_dir, part);
+        WIN32_FILE_ATTRIBUTE_DATA a;
+        if (!GetFileAttributesExA(p, GetFileExInfoStandard, &a)) { *complete = 0; continue; }
+        total += ((long long)a.nFileSizeHigh << 32) | a.nFileSizeLow;
+    }
+    return total;
+}
+
+static DWORD WINAPI first_install_notice_thread(LPVOID)
+{
+    /* one line (notices do not wrap): keep it short */
+    const char* msg = "First start: installing game data (2.5 GB). This takes a few minutes.";
+    /* ovl_notice is ignored until the overlay is installed, which the renderer does as it opens the
+     * game window (rsx_d3d12_backend.c): wait for that window (this process's), then a moment more. */
+    for (int i = 0; i < 600; i++) {                            /* at most 60 s */
+        HWND w = FindWindowA("ps3recomp_d3d12", NULL);
+        DWORD pid = 0;
+        if (w) GetWindowThreadProcessId(w, &pid);
+        if (w && pid == GetCurrentProcessId()) break;
+        Sleep(100);
+    }
+    Sleep(1000);
+    long long last = -1;
+    int stable = 0;
+    for (int t = 0; t < 20 * 60; t += 2) {                    /* at most 20 minutes */
+        int complete;
+        const long long now = install_bytes(&complete);
+        stable = (complete && now == last) ? stable + 1 : 0;
+        last = now;
+        if (stable >= 3) {                                     /* both there, unchanged for 6 s */
+            fprintf(stderr, "[install] first-start install looks complete (%.2f GB in the two archives)\n", now / 1e9);
+            ovl_notice("First-start install finished.", 4000);
+            return 0;
+        }
+        if (t % 20 == 0) ovl_notice(msg, 22000);               /* refreshed before it fades */
+        Sleep(2000);
+    }
+    return 0;
+}
+
+static void first_install_notice(void)
+{
+    const char* hdd0 = getenv("PS3_HDD0_ROOT");
+    char base[MAX_PATH * 2];
+    if (hdd0 && *hdd0) snprintf(base, sizeof base, "%s", hdd0);
+    else if (!GetFullPathNameA("game\\hdd0", sizeof base, base, NULL)) return;
+    snprintf(s_install_dir, sizeof s_install_dir, "%s\\game\\BCUS98125_INSTALL", base);
+    for (char* c = s_install_dir; *c; c++) if (*c == '/') *c = '\\';
+    int complete;
+    install_bytes(&complete);
+    if (complete) return;
+    fprintf(stderr, "[install] first start: the HDD install (%s) is not complete yet -- the game builds it now; "
+                    "a notice says so on screen\n", s_install_dir);
+    HANDLE h = CreateThread(NULL, 0, first_install_notice_thread, NULL, 0, NULL);
+    if (h) CloseHandle(h);
+}
 #endif
 
 int main(int argc, char** argv)
@@ -906,6 +978,7 @@ int main(int argc, char** argv)
     timeBeginPeriod(1);
     setvbuf(stdout, NULL, _IONBF, 0);   /* unbuffered: do not lose prints on a kill */
     overlay_host_for_hooks();           /* before the overlay first shows (it reads OVL_HOST then) */
+    first_install_notice();             /* first start: say the dark screen is the HDD install */
 #endif
     /* Save states: armed by default (SAVESTATES=0 turns them off: no slicing,
      * no thread roots, every request refused); SS_CENSUS and SS_SAVE_AT add
