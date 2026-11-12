@@ -69,8 +69,6 @@
  * around is a Windows problem. */
 #include <timeapi.h>
 #include <tlhelp32.h>   /* HOST_SAMPLE_ALL: thread enumeration */
-#include <dxgi1_6.h>    /* the overlay host: an AMD adapter (issue #15) */
-#pragma comment(lib, "dxgi.lib")
 #endif
 
 /* ---------------------------------------------------------------------------
@@ -852,63 +850,18 @@ static const char* play_mode_setup(void)
 #endif
 
 #ifdef _WIN32
-/* RivaTuner Statistics Server (its OSD; MSI Afterburner's goes through it too) hooks every swap chain's
- * Present. On the options overlay's own composition swap chain that Present returns
- * DXGI_ERROR_DEVICE_REMOVED, which takes the game's device with it: the picture freezes on the first
- * thing the overlay shows (the controller notice at start, F1) while the sound goes on (issue #10,
- * RTSS 7.3.7). The overlay's backbuffer host draws into the game's own frames, which RTSS handles, so
- * with RTSS present we pick that host. An OVL_HOST the player set wins (OVL_HOST=composition keeps the
- * separate layer). RTSS started after the game is not seen. */
-static int rtss_running(void)
-{
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snap == INVALID_HANDLE_VALUE) return 0;
-    PROCESSENTRY32W pe;
-    pe.dwSize = sizeof pe;
-    int found = 0;
-    for (BOOL ok = Process32FirstW(snap, &pe); ok && !found; ok = Process32NextW(snap, &pe))
-        found = !_wcsicmp(pe.szExeFile, L"RTSS.exe");
-    CloseHandle(snap);
-    return found;
-}
-
-/* AMD Radeon (issue #15: RX 9070, driver 32.0.32015.7029; issue #9 the same card): the overlay's composition
- * swap chain, on its own D3D12 queue, crashed the game inside amdxc64.dll (AMD's D3D12 extension driver,
- * access violation) the first time it presented in borderless fullscreen -- the first-start notice, the FPS
- * counter, F1 -- every start; #9's log had that Present fail with DXGI_ERROR_DEVICE_REMOVED instead. The
- * backbuffer host draws with the game's own device into its own frames. The adapter is the one the renderer
- * takes (rsx_d3d12_backend.c): the first hardware adapter by high-performance preference. */
-static int amd_gpu(void)
-{
-    IDXGIFactory6* f6 = NULL;
-    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory6), (void**)&f6)) || !f6) return 0;
-    int amd = 0;
-    IDXGIAdapter1* a = NULL;
-    for (UINT i = 0; f6->EnumAdapterByGpuPreference(i, getenv("CELLMARK_IGPU") ? DXGI_GPU_PREFERENCE_MINIMUM_POWER
-                                                                             : DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
-                                                   __uuidof(IDXGIAdapter1), (void**)&a) != DXGI_ERROR_NOT_FOUND; i++) {
-        DXGI_ADAPTER_DESC1 d;
-        const bool hw = a && SUCCEEDED(a->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE);
-        if (hw) amd = d.VendorId == 0x1002;
-        if (a) a->Release();
-        a = NULL;
-        if (hw) break;
-    }
-    f6->Release();
-    return amd;
-}
-
+/* The options menu, FPS counter and notices are drawn into the game's own frames (the overlay's backbuffer
+ * host), not on a separate DirectComposition layer above the window. That layer failed three ways on
+ * players' PCs: RivaTuner's hook made its Present remove the game's device (the picture froze, issue #10);
+ * AMD's driver crashed in amdxc64.dll the first time it presented in fullscreen (issues #15, #9); and in
+ * borderless fullscreen, once gameplay frames were on screen, the layer came out nearly see-through or
+ * not at all -- F1 paused the game with no menu visible (issue #3; reproduced here on an NVIDIA card: solid
+ * over the boot screen, see-through over gameplay). The backbuffer host has none of these (the game keeps
+ * presenting while paused). OVL_HOST=composition still picks the separate layer. */
 static void overlay_host_for_hooks(void)
 {
     if (getenv("OVL_HOST")) return;
-    const char* why = GetModuleHandleA("RTSSHooks64.dll") ? "RivaTuner's hook (RTSSHooks64.dll) is loaded"
-                    : rtss_running()                     ? "RivaTuner Statistics Server (RTSS.exe) is running"
-                    : amd_gpu()                          ? "an AMD Radeon graphics card (its driver crashed on the separate layer)"
-                                                         : NULL;
-    if (!why) return;
     _putenv_s("OVL_HOST", "backbuffer");
-    fprintf(stderr, "[ovl] %s: the options menu and notices are drawn into the game's picture "
-                    "(OVL_HOST=backbuffer; OVL_HOST=composition keeps the separate layer)\n", why);
 }
 
 /* The first start copies about 2.5 GB from the disc into game\hdd0\game\<title>_INSTALL (as the PS3
