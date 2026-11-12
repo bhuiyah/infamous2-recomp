@@ -75,7 +75,7 @@ Captured from the port running on Windows (2560x1080 monitor); cropped and resiz
   and Russian, text and voices, all on your US disc; only the language list changes (saves stay US saves).
 - **Performance work.** RSX command processing with a separate render thread, lifted and
   register-cached SPU job code, shader and pipeline caches (no compile hitches after the first time),
-  write-watched texture caching, CPU core placement for big-cache CPUs. On the test PC (Ryzen 7 9800X3D,
+  write-watched texture caching, CPU core placement (6+ core CPUs and Intel P-cores: up to ~13% more fps in the heaviest views). On the test PC (Ryzen 7 9800X3D,
   RTX 5080) the heaviest prologue fight measures about 50 fps and New Marais streets 60+ fps; the PS3
   version runs at up to 30.
 - **Texture dumps and replacement packs** (`tools/texpack/README.md`) and **resolution scaling**

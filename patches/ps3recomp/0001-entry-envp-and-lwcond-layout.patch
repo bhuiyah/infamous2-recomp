@@ -23327,7 +23327,7 @@ index 0000000..672808c
 +#endif /* PS3RECOMP_OPT_INI_H */
 diff --git a/libs/system/options.c b/libs/system/options.c
 new file mode 100644
-index 0000000..9167d15
+index 0000000..f81d6ae
 --- /dev/null
 +++ b/libs/system/options.c
 @@ -0,0 +1,1182 @@
@@ -23863,9 +23863,9 @@ index 0000000..9167d15
 +    /* the title reads it once, before its frame clock starts (ps3_host_placement_configure, lv2_register.c);
 +     * HOST_PLACEMENT=auto|off|0-3 overrides it as a debug knob */
 +    { "cpu_placement", "host_placement", "options", "performance", "Frame", "CPU", "CPU core placement",
-+      "Auto: on a CPU with 8 or more cores of one kind that share one cache and have SMT (such as a Ryzen 7 7800X3D "
-+      "or 9800X3D), the renderer and the busiest SPU threads get physical cores of their own -- about 4% more fps in "
-+      "the heaviest views; on other CPUs it stays off. Off: Windows places every thread. Try Off if the game stutters "
++      "Auto: on a CPU with 6 or more cores that have SMT (Ryzen 5 / 7, Core i5-12400...) or with 6 or more P-cores "
++      "(Intel 12th-14th gen, Core Ultra), the renderer and the busiest SPU threads get physical cores of their own "
++      "(P-cores) -- up to ~13% more fps in the heaviest views; on other CPUs it stays off. Off: Windows places every thread. Try Off if the game stutters "
 +      "or the sound crackles while other programs keep the CPU busy (recording, compiling). Restart.",
 +      OPT_ENUM, OPT_RESTART, "auto|off", "Auto|Off", 0, 0, 0, "auto", NULL, NULL, NOPRESET, OPT_F_ADVANCED, "lv2",
 +      NULL },
@@ -126652,7 +126652,7 @@ index 0000000..a660fcd
 +
 +#endif /* PS3RECOMP_FSFD_SS_INC */
 diff --git a/runtime/syscalls/lv2_register.c b/runtime/syscalls/lv2_register.c
-index 1506841..46e1f57 100644
+index 1506841..c4b61e0 100644
 --- a/runtime/syscalls/lv2_register.c
 +++ b/runtime/syscalls/lv2_register.c
 @@ -11,6 +11,7 @@
@@ -126684,46 +126684,53 @@ index 1506841..46e1f57 100644
  #include "ps3emu/spu_fallback.h"
  #include "../spu/spu_lifted_job.h"   /* spu_run_interp_job — run un-lifted SPU images */
  #include "../spu/spu_lifted_thread.h" /* run a thread's own image, lifted */
-@@ -274,6 +282,156 @@ typedef struct {
+@@ -274,6 +282,254 @@ typedef struct {
      int             done;
  } spu_thread_event_t;
  #endif
 +#ifdef _WIN32
-+/* HOST_PLACEMENT (NOTES 2026-10-27, PF1): the threads on the heavy views'
-+ * critical path on physical cores of their own, so no other thread of the game
-+ * shares their core through SMT. In the New Marais pier view a frame is the
-+ * walker's work plus the SPU lighting chain behind its G-buffer readback, and
-+ * the SPU workers run ~80% busy: with the scheduler's placement a busy thread
-+ * often had another for an SMT sibling.
-+ *   1 = the frame clock (the FIFO walker and the renderer) on the
-+ *       highest-numbered core of group 0;
-+ *   2 = that, and the first four of the SPURS kernel's five SPU workers (spu
-+ *       tid 0x2000-0x2003; 0x2004 is ~0.5% busy) each on the next core down;
-+ *   3 = that, and the PPU main thread (the host main thread) on the core below.
-+ * Every other thread of the process gets the remaining cores (the process's
-+ * default CPU sets), except the save-state codec pools (ss_file.c), which a load
-+ * waits on and which run on every core (ps3_host_unplace_thread,
-+ * runtime/platform/host_placement.h). Placement only: nothing the game computes
-+ * depends on it.
-+ * A title opts in (ps3_host_placement_configure, before its frame clock
-+ * starts; inFamous 2: src/main.cpp from the cpu_placement row): the toolkit's
-+ * default is off, so a title that does not opt in is never placed. Auto: 2
-+ * when group 0 has 8+ cores that share one efficiency class and one last-level
-+ * cache and all have SMT (one CCD, no P/E split -- the 9800X3D here), else 0:
-+ * the 6+ logical CPUs left for every other thread (the game's other PPU and SPU
-+ * threads, audio, the driver) are never fewer than before had on a 6-core
-+ * part. 0 = the scheduler places every thread, as before. HOST_PLACEMENT=auto |
-+ * off | 0-3 overrides the title's choice (a debug knob; a forced mode needs 8+
-+ * cores for 3, 7+ for 2, 2+ for 1, else the next mode down, and picks cores by
-+ * CoreIndex: on a hybrid or two-cache CPU that can be the wrong ones). Any CPU
-+ * set call that fails turns placement off. */
++/* HOST_PLACEMENT (NOTES 2026-10-27, PF1; hybrid / affinity 2026-11-12): the threads on the heavy views'
++ * critical path on physical cores of their own, so no other thread of the game shares their core through
++ * SMT. In the New Marais pier view a frame is the walker's work plus the SPU lighting chain behind its
++ * G-buffer readback, and the SPU workers run ~80% busy: with the scheduler's placement a busy thread often
++ * had another for an SMT sibling.
++ *   1 = the frame clock (the FIFO walker and the renderer) on a core of its own;
++ *   2 = that, and the first four of the SPURS kernel's five SPU workers (spu tid 0x2000-0x2003; 0x2004 is
++ *       ~0.5% busy) each on a core of its own;
++ *   3 = that, and the PPU main thread (the host main thread) on a core of its own.
++ * The cores: the process's allowed logical processors in group 0 (its affinity mask: a tool such as Process
++ * Lasso, or `start /affinity`, narrows them), grouped by physical core. The "fast" cores are those of the
++ * highest efficiency class (a hybrid CPU's P-cores; every core of a uniform CPU), and of those, the ones
++ * sharing the last-level cache that holds the most of them (one CCD of a two-CCD part). Placed threads take
++ * fast cores from the highest CoreIndex down. Every other thread of the process gets every allowed core
++ * that is not reserved (the process's default CPU sets) -- on a hybrid CPU that includes the E-cores --,
++ * except: the save-state codec pools and a few others (ps3_host_unplace_thread: every core), and on a
++ * hybrid CPU in mode 1-2 the PPU main thread, which is kept to the P-cores left over (never an E-core;
++ * shared, not reserved). Placement only: nothing the game computes depends on it.
++ * A title opts in (ps3_host_placement_configure, before its frame clock starts; inFamous 2: src/main.cpp
++ * from the cpu_placement row): the toolkit's default is off, so a title that does not opt in is never
++ * placed. Auto picks by the fast cores F (measured on the 9800X3D narrowed with an affinity mask, gate
++ * fight, 3 interleaved rounds, NOTES 2026-11-12: 6 cores off 35.2 fps / 1 38.0 / 2 39.1; 4 cores off 31.3 /
++ * 1 30.9):
++ *   - F >= 6 with SMT, one class, one cache (6-8-core Ryzen, i5-12400, the 9800X3D here): 2;
++ *   - a hybrid CPU with F >= 6 P-cores (12600K, 13400, 12700K, 14700(F)...): 2 on the P-cores, the rest of
++ *     the game on the P-cores left and the E-cores;
++ *   - otherwise off (4 cores: nothing to gain; no SMT: too little left for the other threads).
++ * HOST_PLACEMENT=auto | off | 0-3 overrides the title's choice (a debug knob; a forced mode needs 7 fast
++ * cores for 3, 5 for 2, 2 for 1, else the next mode down). HOST_PLACEMENT_SIM=<cores>:<class>[x<smt>],...
++ * (e.g. "8:1x2,4:0x1" = a 12700K) prints the plan auto would make for that topology and leaves placement
++ * off: a check of the decision on a CPU this PC is not. Any CPU set call that fails turns placement off. */
++#define HP_MAXC 64
++typedef struct { BYTE cidx, eff, llc, nid; ULONG ids[4]; } hp_core;
 +static struct {
 +    int mode, ncores;                   /* -1 undecided */
-+    ULONG ids[64][4]; int nid[64];      /* CPU set ids per core, ascending CoreIndex */
++    hp_core c[HP_MAXC];                 /* allowed cores, ascending CoreIndex */
++    int fast[HP_MAXC], nfast;           /* indexes into c: the fast cores, descending CoreIndex (the order they are taken) */
++    int hybrid;
 +    int defaults_set;
 +    SRWLOCK lk;
 +    int cfg;                            /* the title's choice: 0 off (the default), -1 auto, 1-3 a mode */
-+} s_hp = { -1, 0, {{0}}, {0}, 0, SRWLOCK_INIT, 0 };
++} s_hp = { -1, 0, {{0}}, {0}, 0, 0, 0, SRWLOCK_INIT, 0 };
 +/* The title's choice, before any thread is placed: -1 auto, 0 off, 1-3 a mode. */
 +void ps3_host_placement_configure(int mode)
 +{
@@ -126732,9 +126739,76 @@ index 1506841..46e1f57 100644
 +    else s_hp.cfg = mode < -1 ? -1 : mode > 3 ? 3 : mode;
 +    ReleaseSRWLockExclusive(&s_hp.lk);
 +}
++static int hp_core_of(BYTE cidx, int* nc)       /* the slot of CoreIndex cidx, kept ascending; -1 when full */
++{
++    int k = 0;
++    while (k < *nc && s_hp.c[k].cidx != cidx) k++;
++    if (k < *nc) return k;
++    if (*nc >= HP_MAXC) return -1;
++    int at = *nc;
++    while (at > 0 && s_hp.c[at - 1].cidx > cidx) { s_hp.c[at] = s_hp.c[at - 1]; at--; }
++    memset(&s_hp.c[at], 0, sizeof s_hp.c[at]);
++    s_hp.c[at].cidx = cidx;
++    (*nc)++;
++    return at;
++}
++/* The fast cores (see above) into s_hp.fast, descending CoreIndex. Returns their count. */
++static int hp_pick_fast(int nc)
++{
++    BYTE maxe = 0;
++    for (int k = 0; k < nc; k++) if (s_hp.c[k].eff > maxe) maxe = s_hp.c[k].eff;
++    s_hp.hybrid = 0;
++    for (int k = 0; k < nc; k++) if (s_hp.c[k].eff != maxe) s_hp.hybrid = 1;
++    int best_llc = -1, best_n = 0;
++    for (int k = 0; k < nc; k++) {
++        if (s_hp.c[k].eff != maxe) continue;
++        int n = 0;
++        for (int j = 0; j < nc; j++) if (s_hp.c[j].eff == maxe && s_hp.c[j].llc == s_hp.c[k].llc) n++;
++        if (n > best_n) { best_n = n; best_llc = s_hp.c[k].llc; }
++    }
++    s_hp.nfast = 0;
++    for (int k = nc - 1; k >= 0; k--)
++        if (s_hp.c[k].eff == maxe && s_hp.c[k].llc == best_llc) s_hp.fast[s_hp.nfast++] = k;
++    return s_hp.nfast;
++}
++/* The mode auto picks, and why (for the log). */
++static int hp_auto(int nc, const char** why)
++{
++    const int F = s_hp.nfast;
++    int smt = F > 0, onellc = 1;
++    for (int i = 0; i < F; i++) if (s_hp.c[s_hp.fast[i]].nid < 2) smt = 0;
++    for (int k = 0; k < nc; k++) if (s_hp.c[k].llc != s_hp.c[0].llc) onellc = 0;
++    if (s_hp.hybrid) {
++        if (F >= 6) { *why = "a hybrid CPU with 6+ P-cores: the busy threads on P-cores of their own, the rest of the game on the E-cores and the P-cores left"; return 2; }
++        *why = "a hybrid CPU with under 6 P-cores: off"; return 0;
++    }
++    if (F >= 6 && smt && onellc) { *why = "6+ cores of one kind sharing one cache, with SMT"; return 2; }
++    *why = F < 6 ? "under 6 cores: off (measured: no gain on 4)" : !smt ? "no SMT: off (too little left for the rest)" : "two caches: off";
++    return 0;
++}
++/* HOST_PLACEMENT_SIM: fill s_hp.c from "<n>:<class>[x<smt>],..." (fake ids; never applied). */
++static int hp_sim(const char* spec)
++{
++    int nc = 0; BYTE cidx = 0;
++    for (const char* p = spec; *p; ) {
++        int n = 0, cls = 0, t = 2;
++        if (sscanf(p, "%d:%dx%d", &n, &cls, &t) < 2) return 0;
++        for (int i = 0; i < n && nc < HP_MAXC; i++) {
++            hp_core* c = &s_hp.c[nc++];
++            memset(c, 0, sizeof *c);
++            c->cidx = cidx++; c->eff = (BYTE)cls; c->llc = 0; c->nid = (BYTE)(t < 1 ? 1 : t > 4 ? 4 : t);
++            for (int j = 0; j < c->nid; j++) c->ids[j] = 256u + nc * 4u + (ULONG)j;
++        }
++        p = strchr(p, ',');
++        if (!p) break;
++        p++;
++    }
++    return nc;
++}
 +static void hp_init(void)               /* under s_hp.lk */
 +{
 +    const char* e = getenv("HOST_PLACEMENT");   /* a debug override of the title's choice */
++    const char* sim = getenv("HOST_PLACEMENT_SIM");
 +    int req = s_hp.cfg;
 +    if (e && *e) {
 +        if (!strcmp(e, "auto") || !strcmp(e, "on")) req = -1;
@@ -126742,90 +126816,114 @@ index 1506841..46e1f57 100644
 +        else if (e[0] >= '0' && e[0] <= '3' && !e[1]) req = e[0] - '0';
 +        else fprintf(stderr, "[placement] HOST_PLACEMENT=%s not understood (auto | off | 0-3): the setting's choice\n", e);
 +    }
++    if (sim && *sim) req = -1;
 +    const int autom = req < 0;
-+    int mode = autom ? 2 : req;
 +    s_hp.mode = 0;
-+    if (mode <= 0) {
++    if (req == 0) {
 +        fprintf(stderr, "[placement] off%s: the scheduler places every thread\n",
 +                e && *e ? " (HOST_PLACEMENT)" : " (the cpu_placement setting is Off, or the title did not opt in)");
 +        return;
 +    }
-+    ULONG len = 0;
-+    GetSystemCpuSetInformation(NULL, 0, &len, GetCurrentProcess(), 0);
-+    unsigned char* buf = len ? (unsigned char*)malloc(len) : NULL;
-+    if (!buf || !GetSystemCpuSetInformation((PSYSTEM_CPU_SET_INFORMATION)buf, len, &len, GetCurrentProcess(), 0)) {
-+        fprintf(stderr, "[placement] off: the CPU sets cannot be read (GetSystemCpuSetInformation, error %lu)\n",
-+                (unsigned long)GetLastError());
-+        free(buf); return;
-+    }
-+    BYTE cidx[64]; int nc = 0;
-+    int uniform = 1, seen = 0; BYTE eff0 = 0, llc0 = 0;
-+    for (ULONG o = 0; o < len; ) {
-+        const SYSTEM_CPU_SET_INFORMATION* si = (const SYSTEM_CPU_SET_INFORMATION*)(buf + o);
-+        if (!si->Size) break;
-+        if (si->Type == CpuSetInformation && si->CpuSet.Group == 0) {
-+            if (!seen) { eff0 = si->CpuSet.EfficiencyClass; llc0 = si->CpuSet.LastLevelCacheIndex; seen = 1; }
-+            else if (si->CpuSet.EfficiencyClass != eff0 || si->CpuSet.LastLevelCacheIndex != llc0) uniform = 0;
-+            int k = 0;
-+            while (k < nc && cidx[k] != si->CpuSet.CoreIndex) k++;
-+            if (k == nc && nc < 64) {          /* keep the cores ordered by CoreIndex */
-+                int at = nc;
-+                while (at > 0 && cidx[at - 1] > si->CpuSet.CoreIndex) {
-+                    cidx[at] = cidx[at - 1]; s_hp.nid[at] = s_hp.nid[at - 1];
-+                    memcpy(s_hp.ids[at], s_hp.ids[at - 1], sizeof s_hp.ids[0]);
-+                    at--;
-+                }
-+                cidx[at] = si->CpuSet.CoreIndex; s_hp.nid[at] = 0; nc++; k = at;
-+            }
-+            if (k < nc && s_hp.nid[k] < 4) s_hp.ids[k][s_hp.nid[k]++] = si->CpuSet.Id;
++    int nc = 0;
++    if (sim && *sim) nc = hp_sim(sim);
++    else {
++        DWORD_PTR pmask = 0, smask = 0;
++        if (!GetProcessAffinityMask(GetCurrentProcess(), &pmask, &smask) || !pmask) pmask = ~(DWORD_PTR)0;
++        ULONG len = 0;
++        GetSystemCpuSetInformation(NULL, 0, &len, GetCurrentProcess(), 0);
++        unsigned char* buf = len ? (unsigned char*)malloc(len) : NULL;
++        if (!buf || !GetSystemCpuSetInformation((PSYSTEM_CPU_SET_INFORMATION)buf, len, &len, GetCurrentProcess(), 0)) {
++            fprintf(stderr, "[placement] off: the CPU sets cannot be read (GetSystemCpuSetInformation, error %lu)\n",
++                    (unsigned long)GetLastError());
++            free(buf); return;
 +        }
-+        o += si->Size;
++        for (ULONG o = 0; o < len; ) {
++            const SYSTEM_CPU_SET_INFORMATION* si = (const SYSTEM_CPU_SET_INFORMATION*)(buf + o);
++            if (!si->Size) break;
++            if (si->Type == CpuSetInformation && si->CpuSet.Group == 0 &&
++                si->CpuSet.LogicalProcessorIndex < 8 * sizeof(DWORD_PTR) &&
++                (pmask >> si->CpuSet.LogicalProcessorIndex) & 1) {
++                const int k = hp_core_of(si->CpuSet.CoreIndex, &nc);
++                if (k >= 0) {
++                    hp_core* c = &s_hp.c[k];
++                    c->eff = si->CpuSet.EfficiencyClass; c->llc = si->CpuSet.LastLevelCacheIndex;
++                    if (c->nid < 4) c->ids[c->nid++] = si->CpuSet.Id;
++                }
++            }
++            o += si->Size;
++        }
++        free(buf);
 +    }
-+    free(buf);
-+    int smt = nc > 0;                   /* every core has an SMT sibling */
-+    for (int c = 0; c < nc; c++) if (s_hp.nid[c] < 2) smt = 0;
-+    if (autom && (!uniform || nc < 8 || !smt)) mode = 0;
-+    if (mode >= 3 && nc < 8) mode = 2;
-+    if (mode >= 2 && nc < 7) mode = 1;
-+    if (nc < 2) mode = 0;
-+    s_hp.ncores = nc; s_hp.mode = mode > 3 ? 3 : mode;
-+    fprintf(stderr, "[placement] mode %d%s: %d cores in group 0 (%s, %s)%s\n", s_hp.mode,
-+            autom ? " (auto)" : "", nc, uniform ? "one efficiency class and last-level cache" : "mixed classes / caches",
-+            smt ? "SMT" : "no SMT",
-+            s_hp.mode == 3 ? "; the frame clock, the first four SPU workers and the PPU main thread on cores of their own"
-+            : s_hp.mode == 2 ? "; the frame clock and the first four SPU workers on cores of their own"
-+            : s_hp.mode == 1 ? "; the frame clock on a core of its own"
-+            : autom ? "; auto needs 8+ cores of one kind sharing one cache, with SMT: off" : "");
++    const int F = hp_pick_fast(nc);
++    const char* why = "";
++    int mode = autom ? hp_auto(nc, &why) : req;
++    if (mode >= 3 && F < 7) mode = 2;          /* 6 reserved: at least one fast core left for the rest */
++    if (mode >= 2 && F < 5) mode = 1;
++    if (F < 2) mode = 0;
++    fprintf(stderr, "[placement] %smode %d%s: %d allowed core(s) in group 0, %d fast%s\n",
++            sim && *sim ? "SIM " : "", mode, autom ? " (auto)" : "", nc, F,
++            s_hp.hybrid ? " (P-cores; the rest are E-cores)" : "");
++    if (autom) fprintf(stderr, "[placement]   auto: %s\n", why);
++    if (mode >= 1) {
++        fprintf(stderr, "[placement]   frame clock -> core %u", s_hp.c[s_hp.fast[0]].cidx);
++        if (mode >= 2) for (int i = 0; i < 4; i++) fprintf(stderr, ", SPU worker %d -> core %u", i, s_hp.c[s_hp.fast[1 + i]].cidx);
++        if (mode >= 3) fprintf(stderr, ", PPU main -> core %u", s_hp.c[s_hp.fast[5]].cidx);
++        else if (s_hp.hybrid) fprintf(stderr, ", PPU main -> the %d P-cores left (shared)", F - (mode >= 2 ? 5 : 1));
++        fprintf(stderr, "; everything else on the other %d core(s)%s\n", nc - (mode >= 3 ? 6 : mode >= 2 ? 5 : 1),
++                s_hp.hybrid ? " (P-cores left and E-cores)" : "");
++    }
++    if (sim && *sim) { fprintf(stderr, "[placement]   (HOST_PLACEMENT_SIM: a plan only; placement off)\n"); return; }
++    s_hp.ncores = nc; s_hp.mode = mode;
 +}
-+/* role 0: the frame clock; role 1: SPU worker idx (0..3); role 2: the PPU main
-+ * thread. Returns 1 when placed. */
++static int hp_reserved(void) { return s_hp.mode >= 3 ? 6 : s_hp.mode >= 2 ? 5 : s_hp.mode >= 1 ? 1 : 0; }
++static int hp_is_reserved(int k)
++{
++    const int r = hp_reserved();
++    for (int i = 0; i < r && i < s_hp.nfast; i++) if (s_hp.fast[i] == k) return 1;
++    return 0;
++}
++/* role 0: the frame clock; role 1: SPU worker idx (0..3); role 2: the PPU main thread. Returns 1 when placed. */
 +int ps3_host_place_thread(int role, int idx)
 +{
 +    AcquireSRWLockExclusive(&s_hp.lk);
 +    if (s_hp.mode < 0) hp_init();
-+    int core = -1;
-+    if (s_hp.mode >= 1 && role == 0) core = s_hp.ncores - 1;
-+    else if (s_hp.mode >= 2 && role == 1 && idx >= 0 && idx < 4) core = s_hp.ncores - 2 - idx;
-+    else if (s_hp.mode >= 3 && role == 2) core = s_hp.ncores - 6;
-+    if (core >= 0 && !s_hp.defaults_set) {
-+        const int reserved = s_hp.mode >= 3 ? 6 : s_hp.mode >= 2 ? 5 : 1;
++    int slot = -1;                      /* index into s_hp.fast */
++    if (s_hp.mode >= 1 && role == 0) slot = 0;
++    else if (s_hp.mode >= 2 && role == 1 && idx >= 0 && idx < 4) slot = 1 + idx;
++    else if (s_hp.mode >= 3 && role == 2) slot = 5;
++    const int ppu_p = s_hp.mode >= 1 && s_hp.mode < 3 && role == 2 && s_hp.hybrid;   /* the P-cores left, shared */
++    if ((slot >= 0 || ppu_p) && !s_hp.defaults_set) {
 +        ULONG rest[256]; ULONG nr = 0;
-+        for (int c = 0; c < s_hp.ncores - reserved; c++)
-+            for (int i = 0; i < s_hp.nid[c] && nr < 256; i++) rest[nr++] = s_hp.ids[c][i];
++        for (int k = 0; k < s_hp.ncores; k++)
++            if (!hp_is_reserved(k))
++                for (int i = 0; i < s_hp.c[k].nid && nr < 256; i++) rest[nr++] = s_hp.c[k].ids[i];
 +        const BOOL ok = nr && SetProcessDefaultCpuSets(GetCurrentProcess(), rest, nr);
-+        fprintf(stderr, "[placement] every other thread on the first %d cores (%lu CPU sets): %s\n",
-+                s_hp.ncores - reserved, (unsigned long)nr, ok ? "ok" : "FAILED: placement off");
++        fprintf(stderr, "[placement] every other thread on the %d unreserved core(s) (%lu CPU sets): %s\n",
++                s_hp.ncores - hp_reserved(), (unsigned long)nr, ok ? "ok" : "FAILED: placement off");
 +        s_hp.defaults_set = 1;
-+        if (!ok) { s_hp.mode = 0; core = -1; }
++        if (!ok) { s_hp.mode = 0; slot = -1; }
 +    }
 +    BOOL ok = FALSE;
-+    int wanted = core;
-+    if (core >= 0) {
-+        ok = SetThreadSelectedCpuSets(GetCurrentThread(), s_hp.ids[core], (ULONG)s_hp.nid[core]);
++    int wanted = -1;
++    if (slot >= 0 && s_hp.mode >= 1) {
++        const hp_core* c = &s_hp.c[s_hp.fast[slot]];
++        wanted = c->cidx;
++        ok = SetThreadSelectedCpuSets(GetCurrentThread(), c->ids, (ULONG)c->nid);
 +        if (!ok) {   /* give every core back to the rest: no core stays reserved for a thread that is not on it */
 +            SetProcessDefaultCpuSets(GetCurrentProcess(), NULL, 0);
 +            s_hp.mode = 0;
 +        }
++    } else if (ppu_p && s_hp.mode >= 1) {
++        ULONG ids[256]; ULONG n = 0;
++        for (int i = hp_reserved(); i < s_hp.nfast; i++) {
++            const hp_core* c = &s_hp.c[s_hp.fast[i]];
++            for (int j = 0; j < c->nid && n < 256; j++) ids[n++] = c->ids[j];
++        }
++        ok = n && SetThreadSelectedCpuSets(GetCurrentThread(), ids, n);
++        ReleaseSRWLockExclusive(&s_hp.lk);
++        fprintf(stderr, "[placement] PPU main thread on the %d P-core(s) left (%lu CPU sets, shared): %s\n",
++                s_hp.nfast - hp_reserved(), (unsigned long)n, ok ? "ok" : "FAILED (the scheduler places it)");
++        return 0;
 +    }
 +    ReleaseSRWLockExclusive(&s_hp.lk);
 +    if (wanted >= 0)
@@ -126841,7 +126939,7 @@ index 1506841..46e1f57 100644
  
  typedef struct {
      int      in_use;
-@@ -336,6 +494,12 @@ typedef struct {
+@@ -336,6 +592,12 @@ typedef struct {
       * waiting on the command queue never woke. */
      struct { uint32_t spup; uint32_t queue; } evt_bind[8];
      int                 evt_bind_n;
@@ -126854,7 +126952,7 @@ index 1506841..46e1f57 100644
  } spu_thread_t;
  
  typedef struct {
-@@ -380,6 +544,14 @@ static spu_group_t* spu_alloc_group(void)
+@@ -380,6 +642,14 @@ static spu_group_t* spu_alloc_group(void)
              s_spu_groups[i].state  = SPU_GROUP_STATE_INITIALIZED;
              s_spu_groups[i].exit_status = 0;
              s_spu_groups[i].cause  = SPU_GROUP_CAUSE_ALL_THREADS_EXIT;
@@ -126869,7 +126967,7 @@ index 1506841..46e1f57 100644
              return &s_spu_groups[i];
          }
      }
-@@ -651,9 +823,10 @@ static size_t spu_host_stack_bytes(void)
+@@ -651,9 +921,10 @@ static size_t spu_host_stack_bytes(void)
  
  #ifndef _WIN32
  /* pthread_create with that stack, falling back to the host default if the size
@@ -126883,7 +126981,7 @@ index 1506841..46e1f57 100644
  {
      pthread_attr_t attr;
      pthread_attr_init(&attr);
-@@ -662,7 +835,8 @@ static void spu_spawn_host_thread(spu_thread_handle_t* out,
+@@ -662,7 +933,8 @@ static void spu_spawn_host_thread(spu_thread_handle_t* out,
          rc = pthread_create(out, &attr, fn, arg);
      pthread_attr_destroy(&attr);
      if (rc != 0)
@@ -126893,7 +126991,7 @@ index 1506841..46e1f57 100644
  }
  #endif
  
-@@ -670,19 +844,52 @@ static void spu_spawn_host_thread(spu_thread_handle_t* out,
+@@ -670,19 +942,52 @@ static void spu_spawn_host_thread(spu_thread_handle_t* out,
   *
   * Everything SPU here is in runtime/spu/spu_lifted_thread.c; this is the part
   * that belongs to the group state machine: apply the classified stop to the
@@ -126951,7 +127049,7 @@ index 1506841..46e1f57 100644
      t->exit_status = r.exit_status;
      if (r.group_exit) {
          spu_group_t* g = spu_find_group(t->group_id);
-@@ -698,6 +905,7 @@ static void* spu_exec_thread_proc(void* arg)
+@@ -698,6 +1003,7 @@ static void* spu_exec_thread_proc(void* arg)
  #ifdef _WIN32
      t->running = 0;
      SetEvent(t->finish_event);
@@ -126959,7 +127057,7 @@ index 1506841..46e1f57 100644
      return 0;
  #else
      pthread_mutex_lock(&t->finish_event.mu);
-@@ -705,10 +913,18 @@ static void* spu_exec_thread_proc(void* arg)
+@@ -705,10 +1011,18 @@ static void* spu_exec_thread_proc(void* arg)
      t->finish_event.done = 1;
      pthread_cond_broadcast(&t->finish_event.cv);
      pthread_mutex_unlock(&t->finish_event.mu);
@@ -126978,7 +127076,7 @@ index 1506841..46e1f57 100644
  /* Host-thread entry for a PPU-fallback SPU thread. */
  #ifdef _WIN32
  static DWORD WINAPI spu_fallback_thread_proc(LPVOID arg)
-@@ -716,14 +932,26 @@ static DWORD WINAPI spu_fallback_thread_proc(LPVOID arg)
+@@ -716,14 +1030,26 @@ static DWORD WINAPI spu_fallback_thread_proc(LPVOID arg)
  static void* spu_fallback_thread_proc(void* arg)
  #endif
  {
@@ -127005,7 +127103,7 @@ index 1506841..46e1f57 100644
      t->exit_status = rc;
      /* EXPERIMENT (RD_SPU_DONE_EVENT): on SPU thread completion, deliver an event
       * to the connected queue -- PPU code may block in sys_event_queue_receive for
-@@ -740,6 +968,7 @@ static void* spu_fallback_thread_proc(void* arg)
+@@ -740,6 +1066,7 @@ static void* spu_fallback_thread_proc(void* arg)
  #ifdef _WIN32
      t->running = 0;
      SetEvent(t->finish_event);
@@ -127013,7 +127111,7 @@ index 1506841..46e1f57 100644
      return 0;
  #else
      pthread_mutex_lock(&t->finish_event.mu);
-@@ -747,6 +976,7 @@ static void* spu_fallback_thread_proc(void* arg)
+@@ -747,6 +1074,7 @@ static void* spu_fallback_thread_proc(void* arg)
      t->finish_event.done = 1;
      pthread_cond_broadcast(&t->finish_event.cv);
      pthread_mutex_unlock(&t->finish_event.mu);
@@ -127021,7 +127119,7 @@ index 1506841..46e1f57 100644
      return NULL;
  #endif
  }
-@@ -961,7 +1191,7 @@ static int64_t sys_spu_thread_group_start_handler(ppu_context* ctx)
+@@ -961,7 +1289,7 @@ static int64_t sys_spu_thread_group_start_handler(ppu_context* ctx)
      int spawned = 0;
      int instant = 0;
      int nofb    = 0;   /* subset of `instant` that had no fallback at all */
@@ -127030,7 +127128,7 @@ index 1506841..46e1f57 100644
          uint32_t idx = g->thread_indices[i];
          if (idx >= MAX_SPU_THREADS) continue;
          spu_thread_t* t = &s_spu_threads[idx];
-@@ -983,6 +1213,7 @@ static int64_t sys_spu_thread_group_start_handler(ppu_context* ctx)
+@@ -983,6 +1311,7 @@ static int64_t sys_spu_thread_group_start_handler(ppu_context* ctx)
                  for (int a = 0; a < 4; a++) d.args[a] = t->args[a];
                  spu_lifted_thread_setup(t->sctx, &d);
                  t->running = 1;
@@ -127038,7 +127136,7 @@ index 1506841..46e1f57 100644
  #ifdef _WIN32
                  if (!t->finish_event)
                      t->finish_event = CreateEventA(NULL, TRUE, FALSE, NULL);
-@@ -991,11 +1222,13 @@ static int64_t sys_spu_thread_group_start_handler(ppu_context* ctx)
+@@ -991,11 +1320,13 @@ static int64_t sys_spu_thread_group_start_handler(ppu_context* ctx)
                  t->host_thread = CreateThread(NULL, spu_host_stack_bytes(),
                                                spu_exec_thread_proc, t,
                                                STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
@@ -127053,7 +127151,7 @@ index 1506841..46e1f57 100644
  #endif
                  fprintf(stderr, "[SPU] group_start id=0x%X tid=0x%X entry=0x%08X "
                          "args=0x%08X -> LIFTED SPU execution (image %d, "
-@@ -1103,6 +1336,7 @@ static int64_t sys_spu_thread_group_start_handler(ppu_context* ctx)
+@@ -1103,6 +1434,7 @@ static int64_t sys_spu_thread_group_start_handler(ppu_context* ctx)
              instant++;
              continue;
          }
@@ -127061,7 +127159,7 @@ index 1506841..46e1f57 100644
  #ifdef _WIN32
          /* Manual-reset event so multiple group_join callers all see "set" */
          if (!t->finish_event)
-@@ -1112,11 +1346,13 @@ static int64_t sys_spu_thread_group_start_handler(ppu_context* ctx)
+@@ -1112,11 +1444,13 @@ static int64_t sys_spu_thread_group_start_handler(ppu_context* ctx)
          t->host_thread = CreateThread(NULL, spu_host_stack_bytes(),
                                        spu_fallback_thread_proc, t,
                                        STACK_SIZE_PARAM_IS_A_RESERVATION, NULL);
@@ -127076,7 +127174,7 @@ index 1506841..46e1f57 100644
  #endif
          /* Start handshake for a persistent worker: do not let group_start
           * return until the worker has published its live context.
-@@ -1198,15 +1434,22 @@ static int64_t sys_spu_thread_group_join_handler(ppu_context* ctx)
+@@ -1198,15 +1532,22 @@ static int64_t sys_spu_thread_group_join_handler(ppu_context* ctx)
       * back results. */
      if (g->state == SPU_GROUP_STATE_RUNNING) {
          int32_t worst = 0;
@@ -127101,7 +127199,7 @@ index 1506841..46e1f57 100644
                  if (t->host_thread) {
                      CloseHandle(t->host_thread);
                      t->host_thread = NULL;
-@@ -1277,7 +1520,7 @@ static int64_t sys_spu_thread_group_destroy_handler(ppu_context* ctx)
+@@ -1277,7 +1618,7 @@ static int64_t sys_spu_thread_group_destroy_handler(ppu_context* ctx)
      }
      spu_group_t* g = spu_find_group(id);
      if (g) {
@@ -127110,7 +127208,7 @@ index 1506841..46e1f57 100644
              uint32_t idx = g->thread_indices[i];
              if (idx < MAX_SPU_THREADS) {
                  spu_thread_t* t = &s_spu_threads[idx];
-@@ -1286,6 +1529,9 @@ static int64_t sys_spu_thread_group_destroy_handler(ppu_context* ctx)
+@@ -1286,6 +1627,9 @@ static int64_t sys_spu_thread_group_destroy_handler(ppu_context* ctx)
                      t->local_store = NULL;
                  }
                  if (t->sctx) {
@@ -127120,7 +127218,7 @@ index 1506841..46e1f57 100644
                      free(t->sctx);
                      t->sctx = NULL;
                  }
-@@ -1611,6 +1857,17 @@ static int spu_deliver_user_event(spu_context* spu, uint32_t value)
+@@ -1611,6 +1955,17 @@ static int spu_deliver_user_event(spu_context* spu, uint32_t value)
              spu_group_t* group = spu_find_group(spu->spu_group_id);
              if (group) queue = group->user_event_ports[port];
              ReleaseSRWLockShared(&s_spu_port_lock);
@@ -127138,7 +127236,7 @@ index 1506841..46e1f57 100644
          }
          result = CELL_ENOTCONN;
          if (queue) {
-@@ -1662,6 +1919,63 @@ static int64_t sys_spu_thread_connect_event_handler(ppu_context* ctx)
+@@ -1662,6 +2017,63 @@ static int64_t sys_spu_thread_connect_event_handler(ppu_context* ctx)
      return 0;
  }
  
@@ -127202,7 +127300,7 @@ index 1506841..46e1f57 100644
  /* SPU -> PPU outbound mailbox delivery. Installed into spu_channels.c's
   * g_spu_out_mbox_hook; called when a (kernel/policy/task) SPU thread writes
   * WrOutMbox/WrOutIntrMbox. Route the value to the event queue bound to the SPU
-@@ -1935,8 +2249,8 @@ static int64_t sys_spu_image_import_handler(ppu_context* ctx)
+@@ -1935,8 +2347,8 @@ static int64_t sys_spu_image_import_handler(ppu_context* ctx)
      if (phentsz == 0) phentsz = 0x20;
  
      /* Build the segment array in a dedicated guest scratch region (below the
@@ -127213,7 +127311,7 @@ index 1506841..46e1f57 100644
      uint32_t segs_ea = s_spu_seg_bump;
      int nsegs = 0;
  
-@@ -2117,8 +2431,8 @@ static int64_t sys_spu_image_open_handler(ppu_context* ctx)
+@@ -2117,8 +2529,8 @@ static int64_t sys_spu_image_open_handler(ppu_context* ctx)
      /* Guest scratch for the staged ELF. It shares the 16 MB region below the TLS
       * block with the segment tables, which grow up from 0x0D000000; images grow
       * up from the halfway mark. Reaching the 8 MB that would let them meet needs
@@ -127224,7 +127322,7 @@ index 1506841..46e1f57 100644
      if (s_spu_img_bump + (uint32_t)fsz > SPU_IMAGE_STAGE_END)
          s_spu_img_bump = SPU_IMAGE_STAGE_BASE;                 /* wrap */
      uint32_t staged_ea = s_spu_img_bump;
-@@ -2494,8 +2808,8 @@ void lv2_register_all_syscalls(lv2_syscall_table* tbl)
+@@ -2494,8 +2906,8 @@ void lv2_register_all_syscalls(lv2_syscall_table* tbl)
      lv2_syscall_register(tbl, SYS_SPU_THREAD_SET_SPU_CFG,    sys_spu_thread_set_spu_cfg_handler);
      lv2_syscall_register(tbl, SYS_SPU_THREAD_GET_SPU_CFG,    sys_spu_thread_get_spu_cfg_handler);
      lv2_syscall_register(tbl, SYS_SPU_THREAD_WRITE_SPU_MB,  sys_spu_thread_write_spu_mb_handler);
@@ -127235,7 +127333,7 @@ index 1506841..46e1f57 100644
      lv2_syscall_register(tbl, SYS_SPU_THREAD_GROUP_CONNECT_EVENT_ALL_THREADS, sys_spu_thread_group_connect_event_all_threads_handler);
  }
  
-@@ -2532,9 +2846,14 @@ extern void ps3_hle_register_ctx(uint32_t nid, const char* name, void (*fn)(ppu_
+@@ -2532,9 +2944,14 @@ extern void ps3_hle_register_ctx(uint32_t nid, const char* name, void (*fn)(ppu_
  LV2_HLE_BRIDGE(hle_sys_spu_image_import, sys_spu_image_import_handler)
  LV2_HLE_BRIDGE(hle_sys_spu_image_open,   sys_spu_image_open_handler)
  
@@ -127250,7 +127348,7 @@ index 1506841..46e1f57 100644
  
      ps3_hle_register_ctx(ps3_compute_nid("sys_spu_image_import"),
                           "sys_spu_image_import", hle_sys_spu_image_import);
-@@ -2572,3 +2891,831 @@ int lv2_try_syscall(ppu_context* ctx)
+@@ -2572,3 +2989,831 @@ int lv2_try_syscall(ppu_context* ctx)
                        num, _a3, _a4, _a5, (uint32_t)ctx->gpr[3], (uint32_t)ctx->lr, 10); } } }
      return 1;
  }

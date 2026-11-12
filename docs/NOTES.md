@@ -1,6 +1,33 @@
 # Bring-up notes
 
 Dated log of what was tried and where each run stopped. Newest first.
+## 2026-11-12 — CP1: core placement for 6-core and hybrid Intel CPUs (issues #3, #12)
+EBOOT: BCUS98125 update 1.04 | ps3recomp a679051 + patch 0001 | runtime/syscalls/lv2_register.c, libs/system/options.c (the row's text)
+Players on an i5-11400F (6C/12T, #3: ~25 fps) and a 12700K / 14700F (hybrid, #12 / #13) got no placement: auto
+needed 8+ cores of one class sharing one cache, with SMT, and picked cores by CoreIndex (on a hybrid CPU, maybe E-cores).
+- **Change.** The cores are the process's allowed logical processors (its affinity mask), grouped by core. "Fast"
+  cores = the highest efficiency class (P-cores; every core of a uniform CPU), of those the ones on the last-level
+  cache holding most of them. Placed threads take fast cores from the highest CoreIndex down; the process default
+  (every other thread) = every allowed core not reserved (on a hybrid CPU: the P-cores left and the E-cores). On a
+  hybrid CPU in mode 1-2 the PPU main thread is kept to the P-cores left (shared, never an E-core). Auto: 2 with
+  6+ fast cores and SMT on one cache, or a hybrid CPU with 6+ P-cores; else off. Mode 3 now needs 7 fast cores (6
+  left none for the rest). `HOST_PLACEMENT_SIM=<n>:<class>[x<smt>],...` prints auto's plan for a CPU this PC is not.
+- **Harness** (scratch cp/): bench.ps1 = tools\run.ps1 -LoadState savestates\test\<state>.p3ss with FPS_LOG=1,
+  CHECKPOINT_EXIT_AFTER=40s, the HDD install the states were made over, the process started with `start /affinity`
+  (FFF = 6 cores / 12 threads of the 9800X3D, FF = 4 / 8); mean of the one-second [fps] samples from 3 s after the
+  load (the first sample with over 3000 draws) to the last but one; campaign.ps1 interleaves arms.
+- **Measured** (gate_fight, no input; street = fm_after_boat + left stick forward, right stick 150), fps mean (min):
+  | CPUs | off | mode 1 | mode 2 |
+  |---|---|---|---|
+  | 6C/12T gate (3 rounds) | 35.2 | 38.0 | 39.1 |
+  | 6C/12T gate (3 rounds, 2nd campaign) | 35.6 (34.0) | | 40.1 (37.0-38.0) |
+  | 6C/12T street walk (3 rounds; off A/A 48.6) | 48.2 (46-47) | | 48.0 (46-47) |
+  | 4C/8T gate (3 rounds) | 31.3 | 30.9 | |
+  | 8C/16T gate (2 rounds, earlier campaign) | 41.4 | | 46.9 |
+  Absolute levels moved ~10% between campaigns (the machine), so only arms within one campaign compare. Final exe,
+  auto: 6C 41.7 vs off 39.1; 8C 47.1; 4C picks off (33.2). Hybrid CPUs are not measurable here: the decision was
+  checked with HOST_PLACEMENT_SIM (12700K, 14700F, 13400, Core Ultra 9 285K, Ryzen 5 5600, Ryzen 7 5800X).
+
 ## 2026-11-12 — RL1: RecompLauncher's follow-ups (PR #7): a launcher without its window, real INI defaults, the toolkit download asked first, Recomp Achievements (off)
 launcher (v0.1.8) | recomplauncher.json, tools/setup.ps1, tools/build.ps1, config/display.ini, config/input.ini,
 config/savestates.ini, src/if2_achievements.cpp, src/infamous2_hooks.cpp, CMakeLists.txt, tests/test_if2_achievements.cpp,
