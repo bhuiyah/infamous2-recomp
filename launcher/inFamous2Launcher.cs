@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.23";
+        public const string Version = "0.1.24";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -2429,6 +2429,11 @@ namespace Infamous2Launcher
                 problems.Add("Its path has letters that Windows' code page for programs that are not Unicode (" + Encoding.Default.WebName +
                              ") cannot spell, and the game opens its files through that code page: it would not find them.");
             }
+            // PowerShell reads [ and ] in a path as a wildcard pattern, so build.ps1 cannot even enter such a folder
+            // (Set-Location "...\[PS3] inFamous 2\tools\.." -> path not found; issue #3).
+            if (root.IndexOfAny(new[] { '[', ']' }) >= 0)
+                problems.Add("Its path has square brackets [ ]; the build's PowerShell scripts read them as a wildcard pattern " +
+                             "and cannot find the folder. Use round brackets ( ) or none.");
             if (root.Length > MaxRootLength)
                 problems.Add("Its path is " + root.Length + " characters long; above " + MaxRootLength + " the build's deepest files pass " +
                              "Windows' 260-character path limit and the compiler fails.");
