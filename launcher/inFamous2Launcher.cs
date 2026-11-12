@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.9";
+        public const string Version = "0.1.10";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -2383,6 +2383,13 @@ namespace Infamous2Launcher
             if (code != 0)
             {
                 string first = FirstError();
+                List<string> diag;
+                lock (qLock) diag = ErrorLinesOf(stepLines, 20);
+                if (diag.Count > 1)
+                {
+                    Append("step " + s.Id + " errors (" + diag.Count + (diag.Count == 20 ? "+" : "") + "):");
+                    foreach (var d in diag) Append("  " + d);
+                }
                 if (first != null) Append("step " + s.Id + " failed; its first error: " + first);
                 Finish(false, "Step " + (i + 1) + " of " + Pipeline.Steps.Length + " (" + s.Id + ": " + s.Title + ") failed" +
                               (first != null ? ": " + first : "."));
@@ -2409,12 +2416,33 @@ namespace Infamous2Launcher
             return FirstErrorOf(lines);
         }
 
-        public static string FirstErrorOf(List<string> lines)
+        // Issue #8: a compiler's own diagnostic ("file(l,c): error: ...", "error LNK2019", ninja's "FAILED: x.obj")
+        // wins over any other line. The source lines clang quotes under a warning ("  572 |  printf(... failed ...")
+        // are never an error, whatever words they hold.
+        static readonly Regex DiagErr = new Regex(@"(\(\d+(,\d+)?\)\s*:\s*(fatal )?error\b|:\d+(:\d+)?: (fatal )?error:|\b(fatal )?error (LNK|C|MSB|RC|CS)\d+|^LINK : fatal|^clang(-cl)?: error|^lld-link: error|^FAILED: (?!Step))",
+                                                  RegexOptions.IgnoreCase);
+        static readonly Regex SourceQuote = new Regex(@"^(\d+\s*)?\|");
+        public static List<string> ErrorLinesOf(IEnumerable<string> lines, int max)
         {
+            var r = new List<string>();
             foreach (var l in lines)
             {
                 string t = l.Trim();
-                if (t.Length == 0 || NotErr.IsMatch(t)) continue;
+                if (t.Length == 0 || SourceQuote.IsMatch(t) || !DiagErr.IsMatch(t)) continue;
+                r.Add(t.Length > 400 ? t.Substring(0, 400) + "..." : t);
+                if (r.Count >= max) break;
+            }
+            return r;
+        }
+
+        public static string FirstErrorOf(List<string> lines)
+        {
+            var diag = ErrorLinesOf(lines, 1);
+            if (diag.Count > 0) return diag[0].Length > 300 ? diag[0].Substring(0, 300) + "..." : diag[0];
+            foreach (var l in lines)
+            {
+                string t = l.Trim();
+                if (t.Length == 0 || NotErr.IsMatch(t) || SourceQuote.IsMatch(t)) continue;
                 if (t.StartsWith("Traceback")) continue;            // the exception line at its end says what happened
                 if (ErrLine.IsMatch(t)) return t.Length > 300 ? t.Substring(0, 300) + "..." : t;
             }
@@ -2707,6 +2735,10 @@ namespace Infamous2Launcher
                 var la = logs.GetFiles("launcher-*.log").OrderByDescending(f => f.LastWriteTimeUtc).FirstOrDefault();
                 if (la != null)
                 {
+                    L("");
+                    var errs = ErrorLinesOf(TailOf(la.FullName, int.MaxValue), 40);
+                    L("== error lines in the newest launcher log (logs\\" + la.Name + ")" + (errs.Count == 0 ? ": none" : ""));
+                    foreach (var l in errs) L(l);
                     L("");
                     L("== the newest launcher log (logs\\" + la.Name + "), last 80 lines");
                     foreach (var l in TailOf(la.FullName, 80)) L(l);
