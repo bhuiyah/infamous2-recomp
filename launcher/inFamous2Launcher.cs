@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.12";
+        public const string Version = "0.1.13";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -234,6 +234,49 @@ namespace Infamous2Launcher
         // system and PARAM.SFO readable but its data encrypted with the disc key, and the game then sits on a black
         // screen after the warning. Every game archive of a decrypted copy starts with "PSAR". The game's first run
         // copies some of them into hdd0\game\<title>_INSTALL, so an install made from encrypted files is encrypted too.
+        // Issue #4: the port uses three SPURS policy modules from libsre (tools/extract_policy_modules.py) and the runtime
+        // knows them by their addresses in the 4.92 libsre. Firmware 4.80's libsre has other ones there, and the build
+        // stops at step 6. Checked here in the unrelocated PRX, where those bytes sit unchanged: address in the image,
+        // size, SHA-1 (the same table as the script).
+        static readonly Tuple<uint, int, string>[] LibsreModules =
+        {
+            Tuple.Create(0x21480u, 0x2200, "f41f5ec45be04d84f9d279af5fcfd478542b0240"),
+            Tuple.Create(0x23680u, 0x1E40, "dd993498889ae02aa471e3bfaa0623d104b67ff4"),
+            Tuple.Create(0x2A180u, 0x3E80, "0b30c7042a95059084c3e460817c7f0a5e68306b"),
+        };
+        public const string OldLibsreHelp =
+            "this libsre.prx is from an older PS3 firmware (its SPURS modules differ from the ones the port uses, so the build " +
+            "would stop at step 6). Install the latest official PS3 firmware (4.92 or newer) in RPCS3, decrypt " +
+            "dev_flash\\sys\\external\\libsre.sprx again (Utilities > Decrypt PS3 Binaries) and choose the new libsre.prx.";
+        public static bool LibsreModulesMatch(string prx)
+        {
+            try
+            {
+                byte[] d = File.ReadAllBytes(prx);
+                Func<int, ulong> u64 = o => { ulong v = 0; for (int k = 0; k < 8; k++) v = (v << 8) | d[o + k]; return v; };
+                Func<int, uint> u32 = o => (uint)(d[o] << 24 | d[o + 1] << 16 | d[o + 2] << 8 | d[o + 3]);
+                int phoff = (int)u64(0x20), phentsize = d[0x36] << 8 | d[0x37], phnum = d[0x38] << 8 | d[0x39];
+                foreach (var m in LibsreModules)
+                {
+                    bool found = false;
+                    for (int i = 0; i < phnum && !found; i++)
+                    {
+                        int p = phoff + i * phentsize;
+                        ulong off = u64(p + 8), va = u64(p + 16), fsz = u64(p + 32);
+                        if (u32(p) != 1 || m.Item1 < va || m.Item1 + (ulong)m.Item2 > va + fsz) continue;
+                        int at = (int)(off + (m.Item1 - va));
+                        if (at + m.Item2 > d.Length) return false;
+                        using (var sha = System.Security.Cryptography.SHA1.Create())
+                            if (BitConverter.ToString(sha.ComputeHash(d, at, m.Item2)).Replace("-", "").ToLowerInvariant() != m.Item3) return false;
+                        found = true;
+                    }
+                    if (!found) return false;
+                }
+                return true;
+            }
+            catch { return false; }
+        }
+
         public static bool? IsPsar(string path)
         {
             try
@@ -505,10 +548,14 @@ namespace Infamous2Launcher
                 else
                 {
                     string h = Util.Sha1File(l);
-                    if (Ps3Files.KnownLibsre.ContainsKey(h)) f.Add(new Finding(0, "libsre.prx: decrypted, the known version."));
-                    // (issue #4: this note was read as the cause of a failed build. It is not an error and never stops anything.)
-                    else f.Add(new Finding(0, "libsre.prx: decrypted, from another firmware than the tested 4.92 (usually fine; firmware 4.92 or newer is recommended: one player's build failed with 4.80's libsre)."));
-                    libsrePath = l;
+                    if (Ps3Files.KnownLibsre.ContainsKey(h)) { f.Add(new Finding(0, "libsre.prx: decrypted, the known version.")); libsrePath = l; }
+                    else if (Ps3Files.LibsreModulesMatch(l))
+                    {
+                        // (issue #4: this note was read as the cause of a failed build. It is not an error and never stops anything.)
+                        f.Add(new Finding(0, "libsre.prx: decrypted, from another firmware than the tested 4.92; its SPURS modules match (fine)."));
+                        libsrePath = l;
+                    }
+                    else f.Add(new Finding(2, "libsre: " + Ps3Files.OldLibsreHelp));
                 }
             }
             return f;
@@ -2450,19 +2497,17 @@ namespace Infamous2Launcher
         static readonly Regex NotErr = new Regex(@"^\s*(\[ok\]|\[i\]|\[!\]|warning\b|-- |\[\d+/\d+\] .*\.(c|cpp|obj)$)|errors?: 0\b|0 errors|error_|_error|Werror|-Wno-error",
                                                  RegexOptions.IgnoreCase);
         // Issue #4: a player's build failed with libsre.prx from firmware 4.80 and worked with 4.93's. When a step that
-        // uses libsre fails and the libsre is not the tested one, the failure says so.
+        // uses libsre fails and that libsre's SPURS modules are not the ones the port uses, the failure says so.
         string LibsreHint(string stepId)
         {
             if (stepId != "libsre" && stepId != "jobs" && stepId != "build") return null;
             try
             {
                 string p = new GameFiles(root).LibsrePath;
-                if (!File.Exists(p) || Ps3Files.KnownLibsre.ContainsKey(Util.Sha1File(p))) return null;
+                if (!File.Exists(p) || Ps3Files.KnownLibsre.ContainsKey(Util.Sha1File(p)) || Ps3Files.LibsreModulesMatch(p)) return null;
             }
             catch { return null; }
-            return "Your libsre.prx comes from a different PS3 firmware than the tested one (4.92). A player's build failed with " +
-                   "firmware 4.80's libsre and worked with 4.93's: if this keeps failing, decrypt libsre.sprx from firmware 4.92 or " +
-                   "newer (install the latest official PS3UPDAT.PUP in RPCS3) and choose it with Choose... under 1. Your game files.";
+            return "Your " + Ps3Files.OldLibsreHelp + " Then press Build again.";
         }
 
         string FirstError()
@@ -2790,7 +2835,7 @@ namespace Infamous2Launcher
                 if (File.Exists(gf.LibsrePath))
                 {
                     string h = Util.Sha1File(gf.LibsrePath);
-                    L("libsre.prx: SHA-1 " + h + (Ps3Files.KnownLibsre.ContainsKey(h) ? " (the tested one)" : " (another firmware build: fine)"));
+                    L("libsre.prx: SHA-1 " + h + (Ps3Files.KnownLibsre.ContainsKey(h) ? " (the tested one)" : Ps3Files.LibsreModulesMatch(gf.LibsrePath) ? " (another firmware build; its SPURS modules match: fine)" : " (OLDER FIRMWARE: its SPURS modules differ -- use 4.92 or newer)"));
                 }
             }
             catch (Exception e) { L("files: " + e.Message); }
