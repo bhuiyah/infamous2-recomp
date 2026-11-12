@@ -99,7 +99,7 @@ Captured from the port running on Windows (2560x1080 monitor); cropped and resiz
   HDD install about 2.5 GB).
 - **Build tools** -- the launcher checks them and offers to install missing ones with winget:
   Git for Windows (with Git Bash), Python 3.10+, CMake 3.20+, Ninja, Visual Studio 2022 Build Tools
-  with the C++ workload, LLVM (`clang-cl`).
+  with the C++ workload, LLVM 19 or newer (`clang-cl`; the launcher offers to update an older one).
 
 ## System requirements
 

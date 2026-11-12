@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.14";
+        public const string Version = "0.1.15";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -566,7 +566,7 @@ namespace Infamous2Launcher
     class Prereq
     {
         public string Id, Name, Why, WingetId, WingetArgs, Found, Note;
-        public bool Ok;
+        public bool Ok, Outdated;   // Outdated: installed, but too old (Install becomes Update)
     }
 
     static class Prereqs
@@ -641,9 +641,21 @@ namespace Infamous2Launcher
             nj.Ok = nj.Found != null;
             list.Add(nj);
 
-            var llvm = new Prereq { Id = "llvm", Name = "LLVM (clang-cl)", Why = "the compiler", WingetId = "LLVM.LLVM" };
+            // LLVM 19+: clang-cl 18 and older leave the AVX2 / AVX-512 intrinsic headers out of <immintrin.h>
+            // in MSVC mode unless the whole file is built for that CPU, so the runtime's per-function
+            // target("avx512...") paths fail with "unknown type name '__m512i'" (issue #8, clang 18.1.8).
+            var llvm = new Prereq { Id = "llvm", Name = "LLVM 19 or newer (clang-cl)", Why = "the compiler", WingetId = "LLVM.LLVM" };
             string cl = Path.Combine(Util.Pf, @"LLVM\bin\clang-cl.exe");
-            if (File.Exists(cl)) { llvm.Ok = true; llvm.Found = cl; }
+            if (File.Exists(cl))
+            {
+                Version cv = ClangVersion(cl);
+                if (cv != null && cv.Major < MinClangMajor)
+                {
+                    llvm.Outdated = true; llvm.Found = cl + " (" + cv + ")";
+                    llvm.Note = "found LLVM " + cv + "; " + MinClangMajor + " or newer is needed (older clang-cl cannot compile the game's AVX2 / AVX-512 code)";
+                }
+                else { llvm.Ok = true; llvm.Found = cl + (cv != null ? " (" + cv + ")" : ""); }
+            }
             else llvm.Note = "clang-cl must be in Program Files\\LLVM (the installer's default).";
             list.Add(llvm);
 
@@ -676,7 +688,23 @@ namespace Infamous2Launcher
         }
         public static string WingetCommand(Prereq p)
         {
-            return "winget install --id " + p.WingetId + " --exact --source winget" + (p.WingetArgs != null ? " " + p.WingetArgs : "");
+            // too old: --force installs the current version over it (winget upgrade misses copies it did not install)
+            return "winget install --id " + p.WingetId + " --exact --source winget" + (p.Outdated ? " --force" : "") +
+                   (p.WingetArgs != null ? " " + p.WingetArgs : "");
+        }
+
+        public const int MinClangMajor = 19;
+
+        // "clang version 18.1.8 (...)" -> 18.1.8; null when it cannot be read (then it is not held against it).
+        public static Version ClangVersion(string clangCl)
+        {
+            string o;
+            try { if (Util.Run(clangCl, "--version", out o, 15000) != 0) return null; }
+            catch { return null; }
+            var m = Regex.Match(o ?? "", @"clang version (\d+)\.(\d+)(?:\.(\d+))?");
+            if (!m.Success) return null;
+            return new Version(int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value),
+                               m.Groups[3].Success ? int.Parse(m.Groups[3].Value) : 0);
         }
     }
 
@@ -2191,7 +2219,7 @@ namespace Infamous2Launcher
             {
                 tblPre.RowStyles.Add(new RowStyle(SizeType.Absolute, 23));
                 tblPre.Controls.Add(new Label { Text = p.Name, AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft }, 0, r);
-                string st = p.Ok ? "OK  " + p.Found : "MISSING -- " + p.Why + (p.Note != null ? ". " + p.Note : "");
+                string st = p.Ok ? "OK  " + p.Found : p.Outdated ? "TOO OLD -- " + p.Note : "MISSING -- " + p.Why + (p.Note != null ? ". " + p.Note : "");
                 tblPre.Controls.Add(new Label
                 {
                     Text = st, AutoSize = false, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft, AutoEllipsis = true,
@@ -2199,7 +2227,7 @@ namespace Infamous2Launcher
                 }, 1, r);
                 if (!p.Ok && p.WingetId != null)
                 {
-                    var b = new Button { Text = "Install", Dock = DockStyle.Fill, Margin = new Padding(2, 0, 2, 1), Tag = p };
+                    var b = new Button { Text = p.Outdated ? "Update" : "Install", Dock = DockStyle.Fill, Margin = new Padding(2, 0, 2, 1), Tag = p };
                     b.Click += (s, e) => InstallPrereq((Prereq)((Button)s).Tag);
                     tblPre.Controls.Add(b, 2, r);
                 }
@@ -2219,7 +2247,8 @@ namespace Infamous2Launcher
                 return;
             }
             var ok = MessageBox.Show(this,
-                p.Name + " is missing.\r\n\r\nInstall it with winget? This runs, in a console window you can watch:\r\n\r\n    " + cmd +
+                (p.Outdated ? p.Name + " is too old: " + p.Note + ".\r\n\r\nInstall the current version over it with winget? This runs"
+                            : p.Name + " is missing.\r\n\r\nInstall it with winget? This runs") + ", in a console window you can watch:\r\n\r\n    " + cmd +
                 "\r\n\r\nwinget downloads it from its publisher and may ask you to accept its licence and to allow the installer (UAC)." +
                 (opts.WingetDryRun ? "\r\n\r\n(dry run: the command is only written to the log)" : ""),
                 "Install " + p.Name, MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
