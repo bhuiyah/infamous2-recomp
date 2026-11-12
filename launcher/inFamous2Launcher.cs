@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.18";
+        public const string Version = "0.1.19";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -775,6 +775,25 @@ namespace Infamous2Launcher
             return File.Exists(m) || Directory.Exists(m);
         }
 
+        // A moved / renamed folder (issue #3): the game itself (build\infamous2.exe) finds everything relative to where
+        // it is, so the build step, up to date but for the folder, does not compile it again -- only the build
+        // directory's configuration names the old folder. That is dropped the way tools\build.ps1 drops it for a moved
+        // folder (CMakeCache.txt and CMakeFiles; never the shader cache), so the next real compile configures it here.
+        // Returns true when skipped; the caller records the new folder for the step.
+        public bool SkipMovedBuild(int i, string movedFrom, Action<string> say)
+        {
+            if (Steps[i].Id != "build" || movedFrom == null || !File.Exists(Path.Combine(root, @"build\infamous2.exe"))) return false;
+            say("the folder moved (the game was built in " + movedFrom + "): it does not depend on its folder, so it is not compiled again");
+            try
+            {
+                File.Delete(Path.Combine(root, @"build\CMakeCache.txt"));
+                string cf = Path.Combine(root, @"build\CMakeFiles");
+                if (Directory.Exists(cf)) Directory.Delete(cf, true);
+            }
+            catch (Exception ex) { say("(could not clear the old build configuration: " + ex.Message + "; the next compile does it)"); }
+            return true;
+        }
+
         // Issue #5: a folder moved or copied after a build. Two steps leave this folder's absolute path in what they
         // write -- check (analysis\inputs.json: the EBOOT and libsre) and build (build\CMakeCache.txt, build.ninja) --
         // so they run again when it changed; the steps between keep their results (nothing they wrote names the
@@ -784,7 +803,11 @@ namespace Infamous2Launcher
             string id = Steps[i].Id;
             if (id != "check" && id != "build") return null;
             string here = Path.GetFullPath(root).TrimEnd('\\');
-            if (recorded != null && !string.Equals(recorded.TrimEnd('\\'), here, StringComparison.OrdinalIgnoreCase)) return recorded;
+            // recorded: the step's last run says where it ran, and that settles it (its outputs are from that run). The
+            // files are read only for a state without it: a path in them can point outside the folder without a move
+            // (a linked game\ folder), and reading them after a rerun here would run the step again and again.
+            if (recorded != null)
+                return string.Equals(recorded.TrimEnd('\\'), here, StringComparison.OrdinalIgnoreCase) ? null : recorded;
             try
             {
                 if (id == "check")
@@ -2465,6 +2488,15 @@ namespace Infamous2Launcher
             var s = Pipeline.Steps[i];
             stepOnlyMoved = OnlyMoved(i);
             lock (qLock) stepLines.Clear();
+            if (stepOnlyMoved && pipe.SkipMovedBuild(i, Moved(i), Append))
+            {
+                state.V["root." + s.Id] = Path.GetFullPath(root).TrimEnd('\\');
+                state.Save();
+                int after = FirstStale();
+                if (after < Pipeline.Steps.Length && after != i) RunStep(after);
+                else Finish(true, null);
+                return;
+            }
             if (stepOnlyMoved)
                 Append("the folder moved (step " + s.Id + " ran in " + Moved(i) + "): running it again here; the steps after it keep their results");
             state.Set("done." + s.Id, null);
@@ -3335,6 +3367,15 @@ namespace Infamous2Launcher
                     var s = Pipeline.Steps[i];
                     string moved = pipe.MovedFrom(i, state.Get("root." + s.Id));
                     bool onlyMoved = state.Get("done." + s.Id) == fps[i] && pipe.MarkerOk(i) && moved != null;
+                    if (onlyMoved && pipe.SkipMovedBuild(i, moved, x => Say("INFO " + x)))
+                    {
+                        state.V["root." + s.Id] = Path.GetFullPath(root).TrimEnd('\\');
+                        state.Save();
+                        int nx = FirstStale(pipe, state, out fps);
+                        if (nx == i) return Fail(EStep, "the build step stays out of date after a folder move: press Rebuild");
+                        i = nx;
+                        continue;
+                    }
                     if (onlyMoved) Say("INFO the folder moved (step " + s.Id + " ran in " + moved + "): running it again here; the steps after it keep their results");
                     state.Set("done." + s.Id, null);
                     if (!onlyMoved) for (int k = i + 1; k < total; k++) state.V.Remove("done." + Pipeline.Steps[k].Id);
