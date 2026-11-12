@@ -14,7 +14,7 @@ changed. "Choose..." / "Change..." in the launcher points it at other files late
 | Disc folder (holds `PS3_GAME`) | your disc, dumped with your PS3 or a compatible Blu-ray drive (a decrypted ISO can be extracted with 7-Zip or mounted in Windows) | `PS3_GAME\PARAM.SFO` says BCUS98125 (BCES01143 / BCES01144: beta, see below) |
 | Update 1.04 folder (`BCUS98125`, holds `PARAM.SFO` + `USRDIR`) | the title update installed in RPCS3 (`<RPCS3>\dev_hdd0\game\BCUS98125`) from your console / PSN packages | `PARAM.SFO` says APP_VER 01.04 |
 | Decrypted update EBOOT (`EBOOT.elf`) | RPCS3: Utilities > Decrypt PS3 Binaries on that folder's `USRDIR\EBOOT.BIN` | SHA-1 `7814ff1a87d7d3d10bd0e9627dc05ac353ed4162` (US; 10,605,256 bytes) |
-| Decrypted `libsre.prx` | RPCS3 with the official PS3 firmware installed: Utilities > Decrypt PS3 Binaries on `<RPCS3>\dev_flash\sys\external\libsre.sprx` | a PRX named `cellSre_Library` |
+| Decrypted `libsre.prx` | RPCS3 with the official PS3 firmware (4.92 or newer) installed: Utilities > Decrypt PS3 Binaries on `<RPCS3>\dev_flash\sys\external\libsre.sprx` | a PRX named `cellSre_Library` |
 
 **A European copy (beta).** The same four things, with your disc's title id in place of BCUS98125
 (`<RPCS3>\dev_hdd0\game\BCES01143` for the update, and so on). Decrypt the **update's** `EBOOT.BIN` -- the

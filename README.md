@@ -93,7 +93,7 @@ Captured from the port running on Windows (2560x1080 monitor); cropped and resiz
   *Language edition: Europe* (see Features).
 - **RPCS3** (free) to decrypt two files you own: the update's `EBOOT.BIN` -> `EBOOT.elf`, and the
   firmware's `dev_flash/sys/external/libsre.sprx` -> `libsre.prx` (install the official PS3 firmware in
-  RPCS3 first). Step by step: [game/README.md](game/README.md).
+  RPCS3 first: **4.92 or newer**; a build with 4.80's libsre failed). Step by step: [game/README.md](game/README.md).
 - **A Windows 10/11 x64 PC** that meets the [system requirements](#system-requirements) below. About
   **20 GB** of free disk space (the disc stays where it is; the build takes about 5 GB and the game's own
   HDD install about 2.5 GB).

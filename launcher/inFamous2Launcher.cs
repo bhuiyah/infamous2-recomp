@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.11";
+        public const string Version = "0.1.12";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -263,7 +263,7 @@ namespace Infamous2Launcher
             "This happens when an encrypted disc image (.iso) is unpacked with 7-Zip or WinRAR: the folders look right but the data " +
             "inside stays encrypted, and the game shows only a black screen after the warning.\r\n\r\n" +
             "Decrypt the .iso first (PS3Dec with the disc's key, or dump the disc in decrypted / folder form), extract it again, " +
-            "then choose that folder in the launcher's game files (Change game files).";
+            "then choose that folder with Choose... under 1. Your game files.";
         public static readonly Dictionary<string, string> KnownEboots = new Dictionary<string, string>
         {
             { "f1c20717d6532dfb27e292a5db6cdf5a3218760b", "BCUS98125 disc EBOOT (1.00)" },
@@ -507,7 +507,7 @@ namespace Infamous2Launcher
                     string h = Util.Sha1File(l);
                     if (Ps3Files.KnownLibsre.ContainsKey(h)) f.Add(new Finding(0, "libsre.prx: decrypted, the known version."));
                     // (issue #4: this note was read as the cause of a failed build. It is not an error and never stops anything.)
-                    else f.Add(new Finding(0, "libsre.prx: decrypted (firmware build differs from the tested one: this is fine, it does not stop the build)."));
+                    else f.Add(new Finding(0, "libsre.prx: decrypted, from another firmware than the tested 4.92 (usually fine; firmware 4.92 or newer is recommended: one player's build failed with 4.80's libsre)."));
                     libsrePath = l;
                 }
             }
@@ -2429,8 +2429,10 @@ namespace Infamous2Launcher
                     foreach (var d in diag) Append("  " + d);
                 }
                 if (first != null) Append("step " + s.Id + " failed; its first error: " + first);
+                string hint = LibsreHint(s.Id);
+                if (hint != null) Append(hint);
                 Finish(false, "Step " + (i + 1) + " of " + Pipeline.Steps.Length + " (" + s.Id + ": " + s.Title + ") failed" +
-                              (first != null ? ": " + first : "."));
+                              (first != null ? ": " + first : ".") + (hint != null ? "\r\n\r\n" + hint : ""));
                 return;
             }
             fps = pipe.Fingerprints();     // a step may create inputs of later ones (e.g. setup the toolkit)
@@ -2447,6 +2449,22 @@ namespace Infamous2Launcher
                                                   RegexOptions.IgnoreCase);
         static readonly Regex NotErr = new Regex(@"^\s*(\[ok\]|\[i\]|\[!\]|warning\b|-- |\[\d+/\d+\] .*\.(c|cpp|obj)$)|errors?: 0\b|0 errors|error_|_error|Werror|-Wno-error",
                                                  RegexOptions.IgnoreCase);
+        // Issue #4: a player's build failed with libsre.prx from firmware 4.80 and worked with 4.93's. When a step that
+        // uses libsre fails and the libsre is not the tested one, the failure says so.
+        string LibsreHint(string stepId)
+        {
+            if (stepId != "libsre" && stepId != "jobs" && stepId != "build") return null;
+            try
+            {
+                string p = new GameFiles(root).LibsrePath;
+                if (!File.Exists(p) || Ps3Files.KnownLibsre.ContainsKey(Util.Sha1File(p))) return null;
+            }
+            catch { return null; }
+            return "Your libsre.prx comes from a different PS3 firmware than the tested one (4.92). A player's build failed with " +
+                   "firmware 4.80's libsre and worked with 4.93's: if this keeps failing, decrypt libsre.sprx from firmware 4.92 or " +
+                   "newer (install the latest official PS3UPDAT.PUP in RPCS3) and choose it with Choose... under 1. Your game files.";
+        }
+
         string FirstError()
         {
             List<string> lines;
