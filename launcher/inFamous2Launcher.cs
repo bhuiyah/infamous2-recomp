@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.21";
+        public const string Version = "0.1.22";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -513,7 +513,12 @@ namespace Infamous2Launcher
                     {
                         if (h == Ps3Files.UsUpdateSha1) f.Add(new Finding(0, "EBOOT: " + name + " (SHA-1 matches)."));
                         else if (name.Contains("beta")) f.Add(new Finding(0, "EBOOT: " + name + " (SHA-1 matches); the build finds its addresses by pattern and logs what it found."));
-                        else f.Add(new Finding(2, "EBOOT: this is the " + name + "; decrypt the UPDATE's EBOOT.BIN (1.04) instead."));
+                        // (a Reddit player: "the launcher says my game version is 1.0, RPCS3 says 1.04" -- the update was
+                        // installed, the EBOOT.elf chosen was decrypted from the disc's EBOOT.BIN)
+                        else f.Add(new Finding(2, "EBOOT: this is the " + name + ", decrypted from the DISC's EBOOT.BIN -- even " +
+                            "with update 1.04 installed, the port needs the UPDATE's EBOOT. In RPCS3: Utilities > Decrypt PS3 Binaries, " +
+                            "and pick " + (!string.IsNullOrEmpty(update) ? Path.Combine(update, @"USRDIR\EBOOT.BIN") : @"dev_hdd0\game\BCUS98125\USRDIR\EBOOT.BIN") +
+                            " (the update's, not the disc's PS3_GAME\\USRDIR\\EBOOT.BIN); it writes EBOOT.elf next to it. Choose that one here."));
                     }
                     else if (Ps3Files.IsBeta(discId))
                         f.Add(new Finding(1, "EBOOT: SHA-1 " + h.Substring(0, 12) + "... (" + size.ToString("N0", CultureInfo.InvariantCulture) +
