@@ -882,7 +882,7 @@ static void overlay_host_for_hooks(void)
                     "(OVL_HOST=backbuffer; OVL_HOST=composition keeps the separate layer)\n", why);
 }
 
-/* The first start copies about 2.5 GB from the disc into game\hdd0\game\BCUS98125_INSTALL (as the PS3
+/* The first start copies about 2.5 GB from the disc into game\hdd0\game\<title>_INSTALL (as the PS3
  * does); the screen stays dark until the splash movie, and the full copy takes a few minutes. Players
  * took that for a black-screen hang and closed the game (issues #9, #13). While the install's two
  * archives are missing or still growing, a notice says what is going on. Normal starts: nothing. */
@@ -937,14 +937,84 @@ static DWORD WINAPI first_install_notice_thread(LPVOID)
     return 0;
 }
 
+/* An install interrupted on an earlier start (issue #13: a slow drive, the game closed during the dark first
+ * start) leaves <title>_INSTALL behind with the intro movie and the game's ne.bv but not the archives. The game
+ * decides "installed" from the folder alone (cellGameDataCheck finds it), so every later start skipped the copy
+ * and stayed black after the intro. Every file of a complete install is a copy of the disc's file at the same
+ * path under PS3_GAME\USRDIR (48 of 48 on a US copy; ne.bv is the game's own and has no disc counterpart): a
+ * missing archive, or any file whose size differs from the disc's, means it was cut off. Such a folder is moved
+ * aside (never deleted) to <title>_INSTALL.incomplete-<time>, and the game installs again from the start. */
+static int install_cut_off(const char* inst, const char* disc_usr, const char* rel, char* why, size_t nwhy)
+{
+    char dir[MAX_PATH * 2], pat[MAX_PATH * 2];
+    snprintf(dir, sizeof dir, "%s\\USRDIR%s%s", inst, rel[0] ? "\\" : "", rel);
+    snprintf(pat, sizeof pat, "%s\\*", dir);
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pat, &fd);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    int cut = 0;
+    do {
+        if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
+        char sub[MAX_PATH * 2];
+        snprintf(sub, sizeof sub, "%s%s%s", rel, rel[0] ? "\\" : "", fd.cFileName);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) { cut = install_cut_off(inst, disc_usr, sub, why, nwhy); continue; }
+        char dp[MAX_PATH * 2];
+        snprintf(dp, sizeof dp, "%s\\%s", disc_usr, sub);
+        WIN32_FILE_ATTRIBUTE_DATA a;
+        if (!GetFileAttributesExA(dp, GetFileExInfoStandard, &a)) continue;   /* the game's own file (ne.bv) */
+        const long long have = ((long long)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
+        const long long want = ((long long)a.nFileSizeHigh << 32) | a.nFileSizeLow;
+        if (have != want) {
+            snprintf(why, nwhy, "%s is %lld of %lld bytes", sub, have, want);
+            cut = 1;
+        }
+    } while (!cut && FindNextFileA(h, &fd));
+    FindClose(h);
+    return cut;
+}
+
+static void install_repair(const char* disc_usr)
+{
+    if (GetFileAttributesA(s_install_dir) == INVALID_FILE_ATTRIBUTES) return;        /* not made yet */
+    if (GetFileAttributesA(disc_usr) == INVALID_FILE_ATTRIBUTES) return;             /* no disc to compare with */
+    char why[MAX_PATH * 2] = "";
+    static const char* const k_parts[] = { "install1\\infamous1.psarc_s", "install2\\infamous2.psarc_s" };
+    for (const char* part : k_parts) {
+        char p[MAX_PATH * 2];
+        snprintf(p, sizeof p, "%s\\USRDIR\\cache\\psarc\\%s", s_install_dir, part);
+        if (!why[0] && GetFileAttributesA(p) == INVALID_FILE_ATTRIBUTES) snprintf(why, sizeof why, "cache\\psarc\\%s is missing", part);
+    }
+    if (!why[0] && !install_cut_off(s_install_dir, disc_usr, "", why, sizeof why)) return;   /* complete */
+    SYSTEMTIME st; GetLocalTime(&st);
+    char aside[MAX_PATH * 2];
+    snprintf(aside, sizeof aside, "%s.incomplete-%04u%02u%02u-%02u%02u%02u", s_install_dir, st.wYear, st.wMonth, st.wDay,
+             st.wHour, st.wMinute, st.wSecond);
+    if (MoveFileA(s_install_dir, aside))
+        fprintf(stderr, "[install] the HDD install was cut off on an earlier start (%s): moved aside to %s; "
+                        "the game installs again now\n", why, aside);
+    else
+        fprintf(stderr, "[install] the HDD install was cut off on an earlier start (%s), and moving it aside failed "
+                        "(error %lu): the game may stay black after the intro -- delete %s and start again\n",
+                why, (unsigned long)GetLastError(), s_install_dir);
+}
+
 static void first_install_notice(void)
 {
     const char* hdd0 = getenv("PS3_HDD0_ROOT");
     char base[MAX_PATH * 2];
     if (hdd0 && *hdd0) snprintf(base, sizeof base, "%s", hdd0);
     else if (!GetFullPathNameA("game\\hdd0", sizeof base, base, NULL)) return;
-    snprintf(s_install_dir, sizeof s_install_dir, "%s\\game\\BCUS98125_INSTALL", base);
+    /* the edition's own folder: BCUS98125_INSTALL, BCES01143_INSTALL (Europe)... */
+    snprintf(s_install_dir, sizeof s_install_dir, "%s\\game\\%s_INSTALL", base, IF2_TITLE_ID);
     for (char* c = s_install_dir; *c; c++) if (*c == '/') *c = '\\';
+    {
+        const char* vfs = getenv("PS3_VFS_ROOT");
+        char disc_usr[MAX_PATH * 2];
+        if (vfs && *vfs) snprintf(disc_usr, sizeof disc_usr, "%s\\PS3_GAME\\USRDIR", vfs);
+        else if (!GetFullPathNameA("game\\disc\\PS3_GAME\\USRDIR", sizeof disc_usr, disc_usr, NULL)) disc_usr[0] = 0;
+        for (char* c = disc_usr; *c; c++) if (*c == '/') *c = '\\';
+        if (disc_usr[0]) install_repair(disc_usr);
+    }
     int complete;
     install_bytes(&complete);
     if (complete) return;
