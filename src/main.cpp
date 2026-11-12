@@ -849,6 +849,40 @@ static const char* play_mode_setup(void)
 }
 #endif
 
+#ifdef _WIN32
+/* RivaTuner Statistics Server (its OSD; MSI Afterburner's goes through it too) hooks every swap chain's
+ * Present. On the options overlay's own composition swap chain that Present returns
+ * DXGI_ERROR_DEVICE_REMOVED, which takes the game's device with it: the picture freezes on the first
+ * thing the overlay shows (the controller notice at start, F1) while the sound goes on (issue #10,
+ * RTSS 7.3.7). The overlay's backbuffer host draws into the game's own frames, which RTSS handles, so
+ * with RTSS present we pick that host. An OVL_HOST the player set wins (OVL_HOST=composition keeps the
+ * separate layer). RTSS started after the game is not seen. */
+static int rtss_running(void)
+{
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return 0;
+    PROCESSENTRY32W pe;
+    pe.dwSize = sizeof pe;
+    int found = 0;
+    for (BOOL ok = Process32FirstW(snap, &pe); ok && !found; ok = Process32NextW(snap, &pe))
+        found = !_wcsicmp(pe.szExeFile, L"RTSS.exe");
+    CloseHandle(snap);
+    return found;
+}
+
+static void overlay_host_for_hooks(void)
+{
+    if (getenv("OVL_HOST")) return;
+    const char* why = GetModuleHandleA("RTSSHooks64.dll") ? "RivaTuner's hook (RTSSHooks64.dll) is loaded"
+                    : rtss_running()                     ? "RivaTuner Statistics Server (RTSS.exe) is running"
+                                                         : NULL;
+    if (!why) return;
+    _putenv_s("OVL_HOST", "backbuffer");
+    fprintf(stderr, "[ovl] %s: the options menu and notices are drawn into the game's picture "
+                    "(OVL_HOST=backbuffer; OVL_HOST=composition keeps the separate layer)\n", why);
+}
+#endif
+
 int main(int argc, char** argv)
 {
     const char* eboot_arg = argc >= 2 ? argv[1] : NULL;
@@ -871,6 +905,7 @@ int main(int argc, char** argv)
      * thing. POSIX timers are already fine-grained. */
     timeBeginPeriod(1);
     setvbuf(stdout, NULL, _IONBF, 0);   /* unbuffered: do not lose prints on a kill */
+    overlay_host_for_hooks();           /* before the overlay first shows (it reads OVL_HOST then) */
 #endif
     /* Save states: armed by default (SAVESTATES=0 turns them off: no slicing,
      * no thread roots, every request refused); SS_CENSUS and SS_SAVE_AT add
