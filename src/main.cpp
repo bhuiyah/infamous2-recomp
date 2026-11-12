@@ -69,6 +69,8 @@
  * around is a Windows problem. */
 #include <timeapi.h>
 #include <tlhelp32.h>   /* HOST_SAMPLE_ALL: thread enumeration */
+#include <dxgi1_6.h>    /* the overlay host: an AMD adapter (issue #15) */
+#pragma comment(lib, "dxgi.lib")
 #endif
 
 /* ---------------------------------------------------------------------------
@@ -870,11 +872,38 @@ static int rtss_running(void)
     return found;
 }
 
+/* AMD Radeon (issue #15: RX 9070, driver 32.0.32015.7029; issue #9 the same card): the overlay's composition
+ * swap chain, on its own D3D12 queue, crashed the game inside amdxc64.dll (AMD's D3D12 extension driver,
+ * access violation) the first time it presented in borderless fullscreen -- the first-start notice, the FPS
+ * counter, F1 -- every start; #9's log had that Present fail with DXGI_ERROR_DEVICE_REMOVED instead. The
+ * backbuffer host draws with the game's own device into its own frames. The adapter is the one the renderer
+ * takes (rsx_d3d12_backend.c): the first hardware adapter by high-performance preference. */
+static int amd_gpu(void)
+{
+    IDXGIFactory6* f6 = NULL;
+    if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory6), (void**)&f6)) || !f6) return 0;
+    int amd = 0;
+    IDXGIAdapter1* a = NULL;
+    for (UINT i = 0; f6->EnumAdapterByGpuPreference(i, getenv("CELLMARK_IGPU") ? DXGI_GPU_PREFERENCE_MINIMUM_POWER
+                                                                             : DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,
+                                                   __uuidof(IDXGIAdapter1), (void**)&a) != DXGI_ERROR_NOT_FOUND; i++) {
+        DXGI_ADAPTER_DESC1 d;
+        const bool hw = a && SUCCEEDED(a->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE);
+        if (hw) amd = d.VendorId == 0x1002;
+        if (a) a->Release();
+        a = NULL;
+        if (hw) break;
+    }
+    f6->Release();
+    return amd;
+}
+
 static void overlay_host_for_hooks(void)
 {
     if (getenv("OVL_HOST")) return;
     const char* why = GetModuleHandleA("RTSSHooks64.dll") ? "RivaTuner's hook (RTSSHooks64.dll) is loaded"
                     : rtss_running()                     ? "RivaTuner Statistics Server (RTSS.exe) is running"
+                    : amd_gpu()                          ? "an AMD Radeon graphics card (its driver crashed on the separate layer)"
                                                          : NULL;
     if (!why) return;
     _putenv_s("OVL_HOST", "backbuffer");
