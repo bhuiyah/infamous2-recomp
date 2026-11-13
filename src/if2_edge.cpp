@@ -210,14 +210,16 @@ void corpus_write(int stage, const spu_context* before_ctx, const uint8_t* ls_be
 }
 
 /* ---- EG1 native stages (if2_edge_native.c) ------------------------------------------
- * EG_NATIVE=1: the skinning stage runs natively (falls back to the SPU code per call when its input is
- * outside what the native code implements). EG_VERIFY=<n>: every n-th call, the native code runs on a
- * copy of the local store, the SPU code on the real one, and the two are compared byte for byte outside
- * the stack frame ([EG-VERIFY]). */
+ * EG_NATIVE=1: the skinning and triangle-culling stages run natively (each falls back to the SPU code per
+ * call when its input is outside what the native code implements). EG_VERIFY=<n>: every n-th call of a
+ * stage, the native code runs on a copy of the local store, the SPU code on the real one, and the two are
+ * compared byte for byte outside the stack frame ([EG-VERIFY]). */
 extern "C" int if2_eg_skin(uint8_t* ls, uint32_t ectx, uint32_t mats, uint32_t nmat, uint32_t blend);
+extern "C" int if2_eg_cull(uint8_t* ls, uint32_t ectx, uint32_t flavor, u128* r3);
 int s_native, s_verify_every;
 volatile LONG s_v_calls, s_v_n, s_v_bad, s_v_unsup, s_nat_calls, s_nat_fallback;
-spu_fn_t s_skin_orig;
+volatile LONG s_vc_calls, s_natc_calls, s_natc_fallback;
+spu_fn_t s_skin_orig, s_cull_orig;
 
 void verify_compare(const char* stage, const uint8_t* a, const uint8_t* b, uint32_t sp)
 {
@@ -263,6 +265,35 @@ void skin_hook(spu_context* ctx)
         InterlockedIncrement(&s_nat_fallback);
     }
     run_orig(ctx, s_skin_orig);
+}
+
+void cull_hook(spu_context* ctx)
+{
+    const uint32_t ectx = r32(ctx, 3), flavor = r32(ctx, 4);
+    if (s_verify_every && InterlockedIncrement(&s_vc_calls) % s_verify_every == 0) {
+        static __declspec(thread) uint8_t* copy;
+        if (!copy) copy = (uint8_t*)malloc(SPU_LS_SIZE);
+        memcpy(copy, ctx->ls, SPU_LS_SIZE);
+        u128 r3;
+        const int ok = if2_eg_cull(copy, ectx, flavor, &r3);
+        const uint32_t sp = r32(ctx, 1);
+        run_orig(ctx, s_cull_orig);
+        if (ok) {
+            if (memcmp(&r3, &ctx->gpr[3], sizeof r3)) {     /* the returned count: a mismatch in the LS compare too */
+                const LONG bad = InterlockedIncrement(&s_v_bad);
+                if (bad <= 12) fprintf(stderr, "[EG-VERIFY] cull r3 MISMATCH: native %08X spu %08X%c", r3._u32[0], ctx->gpr[3]._u32[0], 10);
+            }
+            verify_compare("cull", copy, ctx->ls, sp);
+        } else InterlockedIncrement(&s_v_unsup);
+        return;
+    }
+    if (s_native) {
+        InterlockedIncrement(&s_natc_calls);
+        u128 r3;
+        if (if2_eg_cull(ctx->ls, ectx, flavor, &r3)) { ctx->gpr[3] = r3; SPU_RET(ctx); return; }
+        InterlockedIncrement(&s_natc_fallback);
+    }
+    run_orig(ctx, s_cull_orig);
 }
 
 template <int I> void stage_hook(spu_context* ctx)
@@ -321,6 +352,11 @@ extern "C" void if2_edge_configure(void)
                      s_verify_every ? " (EG_VERIFY: compared with the SPU code)" : "", 10);
         if (s_native) atexit([] { fprintf(stderr, "[EG] native skinning: %ld calls, %ld fell back to the SPU code%c",
                                           (long)s_nat_calls, (long)s_nat_fallback, 10); });
+        const char* nc = getenv("EG_NO_CULL");   /* A/B: skinning only */
+        if (!(nc && *nc == 0x31)) s_cull_orig = spu_registry_replace(kImage, 0xA798, cull_hook);
+        if (!s_cull_orig) fprintf(stderr, "[EG] native culling off%c", 10);
+        else if (s_native) atexit([] { fprintf(stderr, "[EG] native culling: %ld calls, %ld fell back to the SPU code%c",
+                                                (long)s_natc_calls, (long)s_natc_fallback, 10); });
     }
     if (!s_dump_left && !s_census && !s_spin) return;
     s_seg_orig = spu_registry_replace(kImage, kSegment, segment_hook);

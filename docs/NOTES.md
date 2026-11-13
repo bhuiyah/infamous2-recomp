@@ -1,6 +1,29 @@
 # Bring-up notes
 
 Dated log of what was tried and where each run stopped. Newest first.
+## 2026-11-13 — EG1: Edge Geometry triangle culling as native code, bit-exact (4 threads +5.9%)
+
+- **What it is.** The Edge job's second-largest stage (0xA798 with its per-vertex pass 0xA3C8; 26% of the job):
+  each vertex is transformed by the object and view-projection rows, divided by |w| (frest, fi, one Newton step),
+  mapped to the viewport and given an outcode (x/y/z bounds, w > 0); then per triangle: culled when all three
+  outcodes share an outside plane, or (all in front) when back-facing (flavors 2/3) or when all three corners
+  snap to one pixel column or row. The kept indices are compacted in place.
+- **Native** (src/if2_edge_native.c `if2_eg_cull`): the same operations in the same order under the SPU threads'
+  RZ/DAZ/FTZ mode. The in-place compaction reproduces the SPU code's software pipeline store for store (two leading
+  all-culled groups, the read-merge at the write point, the stores past the input redirected to the stack), so
+  the bytes after the kept list are identical too. Fast path: vertices 8 at a time (AVX2) within range bounds,
+  triangles 4 at a time from a native copy [x, y, outcode, snapped x|y]; anything out of range takes the toolkit's
+  exact SPU float helpers. A custom per-vertex callback, flavor 0 and the no-cull mode run the SPU code.
+- **Verification.** Offline 80 recorded calls byte-identical (local store outside the stack frame, r3); in game
+  EG_VERIFY=2 in both test states: ~1.26M compares (culling and skinning), 0 mismatches.
+- **Cost.** Harness (TSC, warm): ~14-16k per call for ~550 vertices / ~850 triangles; the lifted code, at the
+  census rates, ~54k.
+- **Gain** (gate fight, 2 reps, frame interval): 4 threads 30.3 -> 28.6 ms (33.0 -> 34.9 fps, +5.9%), 6 threads
+  22.0 -> 21.7 ms (+1.5%). Same option row (Frame > CPU > Native geometry processing); EG_NO_CULL=1 keeps
+  culling on the SPU code (A/B).
+- Also: the skinning's per-vertex diagnostic counters (v0.1.29) were shared globals bumped from every SPU thread;
+  all such counters are compiled into the offline harness only now.
+
 ## 2026-11-13 — EG1: Edge Geometry skinning as native code, bit-exact (4 threads +4.5%)
 
 - **What the job is.** SPU job module d0d15ec83992 (image 222, 22% of the SPU threads' samples, the largest) is
