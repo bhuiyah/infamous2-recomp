@@ -18,7 +18,9 @@ SDK="${PS3RECOMP:-external/ps3recomp}"
 rm -rf generated/spu_jobs
 # Edge Geometry (job 222): its stage calls go through the dispatcher so src/if2_edge.cpp can
 # replace them at run time (spu_lifter.py --indirect-calls; other modules unchanged).
-export SPU_JOBMOD_INDIRECT_CALLS="${SPU_JOBMOD_INDIRECT_CALLS-jobmod_d0d15ec83992_ea2a0:0x5740,0x4448,0xAD48,0x5490,0xD0A8,0xD030,0xC7B8,0xA798,0xA3C8}"
+# The BSP clipper of job 216 (0x68D8: src/if2_bsp_native.c) and the render-list builder's main of job 225
+# (0x12C60) likewise.
+export SPU_JOBMOD_INDIRECT_CALLS="${SPU_JOBMOD_INDIRECT_CALLS-jobmod_d0d15ec83992_ea2a0:0x5740,0x4448,0xAD48,0x5490,0xD0A8,0xD030,0xC7B8,0xA798,0xA3C8;jobmod_9cb47b0cc0eb_e60c0:0x68D8;jobmod_ed956f3d8d84_e14ff0:0x12C60}"
 # The job modules (and the JobChain binaries: lift_jobchain.py sets it itself)
 # keep SPU registers in C locals (spu_lifter.py --reg-cache); SPU_LIFT_RCACHE=0
 # restores the ctx->gpr lift. Not used for the policy modules below.

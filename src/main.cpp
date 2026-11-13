@@ -518,6 +518,8 @@ extern "C" void spu_taskset_lle_configure(int on);
 /* GL1 (src/if2_glight.cpp): the SPU lighting job on the GPU (GLIGHT, GLIGHT_VERIFY). */
 extern "C" void if2_glight_configure(void);
 extern "C" void if2_edge_configure(void);
+extern "C" void if2_bsp_configure(void);
+extern "C" void if2_rlist_configure(void);
 
 static DWORD WINAPI frame_clock(LPVOID)
 {
@@ -1130,6 +1132,8 @@ int main(int argc, char** argv)
     spu_taskset_lle_configure(1);   /* before the first SPU thread */
     if2_glight_configure();         /* before the first SPU thread and the device */
     if2_edge_configure();           /* EG: the Edge Geometry job (native skinning) */
+    if2_bsp_configure();            /* job 216's BSP clipper, natively (src/if2_bsp_native.c) */
+    if2_rlist_configure();          /* job 225's render-list builder, natively (src/if2_rlist_native.c) */
     s_clock_thread = CreateThread(NULL, 4u * 1024 * 1024, frame_clock, NULL, 0, NULL);
     if (getenv("HOST_SAMPLE")) CreateThread(NULL, 0, host_sampler, NULL, 0, NULL);
 

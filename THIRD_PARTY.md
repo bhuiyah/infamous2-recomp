@@ -20,6 +20,13 @@ is either fetched by the build from its own source or merely referred to.
   codecs). They are part of the toolkit checkout and of the executable you build, not of this repository; see
   the toolkit's own files for their terms.
 
+## Native SPU job rewrites
+
+- **What:** `src/if2_rlist_native.c` (the render-list builder of SPU job 225) and `src/if2_bsp_native.c` (the BSP
+  polygon clipper of SPU job 216): C rewrites of what those jobs compute, adapted from MIT-licensed code and checked
+  against the translated SPU code with their live checks (`RLIST_NATIVE=2`, `BSP_NATIVE=2`).
+- **Licence:** MIT; the copyright and permission notices are at the top of each file.
+
 ## Referred to, not included
 
 - **RPCS3** (<https://rpcs3.net>, GPL-2.0): used by players to decrypt their own EBOOT and firmware, and as a
