@@ -23327,10 +23327,10 @@ index 0000000..672808c
 +#endif /* PS3RECOMP_OPT_INI_H */
 diff --git a/libs/system/options.c b/libs/system/options.c
 new file mode 100644
-index 0000000..20bcd75
+index 0000000..237ce5f
 --- /dev/null
 +++ b/libs/system/options.c
-@@ -0,0 +1,1195 @@
+@@ -0,0 +1,1196 @@
 +/*
 + * ps3recomp - the settings store. API, layers and threading rules:
 + * include/ps3emu/options.h. The ini editor is libs/system/opt_ini.h.
@@ -23878,8 +23878,9 @@ index 0000000..20bcd75
 +      "gain on 4- and 6-core CPUs). Off: the PS3's SPU code on the CPU, as before. Restart.",
 +      OPT_BOOL, OPT_RESTART, NULL, "Off|On", 0, 0, 0, "1", "GLIGHT", NULL, NOPRESET, 0, "rsx-d3d12", NULL },
 +    { "native_geometry", "eg", "options", "performance", "Frame", "CPU", "Native geometry processing",
-+      "On: the game's geometry work done on the PS3's SPUs by Sony's Edge Geometry library (skinning and triangle "
-+      "culling) runs as native PC code -- the same result, bit for bit, in less CPU time (most noticeable on 4-core CPUs). "
++      "On: the game's geometry work done on the PS3's SPUs by Sony's Edge Geometry library (vertex decompression, "
++      "skinning, triangle culling) runs as native PC code -- the same result, bit for bit, in less CPU time (most "
++      "noticeable on 4-core CPUs). "
 +      "Off: the PS3's SPU code, as before. Restart.",
 +      OPT_BOOL, OPT_RESTART, NULL, "Off|On", 0, 0, 0, "1", "EG_NATIVE", NULL, NOPRESET, 0, "rsx-d3d12", NULL },
 +

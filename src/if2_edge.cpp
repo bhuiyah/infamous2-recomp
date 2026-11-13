@@ -210,16 +210,17 @@ void corpus_write(int stage, const spu_context* before_ctx, const uint8_t* ls_be
 }
 
 /* ---- EG1 native stages (if2_edge_native.c) ------------------------------------------
- * EG_NATIVE=1: the skinning and triangle-culling stages run natively (each falls back to the SPU code per
- * call when its input is outside what the native code implements). EG_VERIFY=<n>: every n-th call of a
+ * EG_NATIVE=1: the vertex-decompression, skinning and triangle-culling stages run natively (each falls back to
+ * the SPU code per call when its input is outside what the native code implements). EG_VERIFY=<n>: every n-th call of a
  * stage, the native code runs on a copy of the local store, the SPU code on the real one, and the two are
  * compared byte for byte outside the stack frame ([EG-VERIFY]). */
 extern "C" int if2_eg_skin(uint8_t* ls, uint32_t ectx, uint32_t mats, uint32_t nmat, uint32_t blend);
 extern "C" int if2_eg_cull(uint8_t* ls, uint32_t ectx, uint32_t flavor, u128* r3);
+extern "C" int if2_eg_decomp(uint8_t* ls, uint32_t ectx, uint32_t cfg, uint32_t ptab);
 int s_native, s_verify_every;
 volatile LONG s_v_calls, s_v_n, s_v_bad, s_v_unsup, s_nat_calls, s_nat_fallback;
-volatile LONG s_vc_calls, s_natc_calls, s_natc_fallback;
-spu_fn_t s_skin_orig, s_cull_orig;
+volatile LONG s_vc_calls, s_natc_calls, s_natc_fallback, s_vd_calls, s_natd_calls, s_natd_fallback;
+spu_fn_t s_skin_orig, s_cull_orig, s_dec_orig;
 
 void verify_compare(const char* stage, const uint8_t* a, const uint8_t* b, uint32_t sp)
 {
@@ -296,6 +297,28 @@ void cull_hook(spu_context* ctx)
     run_orig(ctx, s_cull_orig);
 }
 
+void decomp_hook(spu_context* ctx)
+{
+    const uint32_t ectx = r32(ctx, 3), cfg = r32(ctx, 4), ptab = r32(ctx, 5);
+    if (s_verify_every && InterlockedIncrement(&s_vd_calls) % s_verify_every == 0) {
+        static __declspec(thread) uint8_t* copy;
+        if (!copy) copy = (uint8_t*)malloc(SPU_LS_SIZE);
+        memcpy(copy, ctx->ls, SPU_LS_SIZE);
+        const int ok = if2_eg_decomp(copy, ectx, cfg, ptab);
+        const uint32_t sp = r32(ctx, 1);
+        run_orig(ctx, s_dec_orig);
+        if (ok) verify_compare("decomp", copy, ctx->ls, sp);
+        else InterlockedIncrement(&s_v_unsup);
+        return;
+    }
+    if (s_native) {
+        InterlockedIncrement(&s_natd_calls);
+        if (if2_eg_decomp(ctx->ls, ectx, cfg, ptab)) { SPU_RET(ctx); return; }   /* r3 (the context) unchanged */
+        InterlockedIncrement(&s_natd_fallback);
+    }
+    run_orig(ctx, s_dec_orig);
+}
+
 template <int I> void stage_hook(spu_context* ctx)
 {
     if (s_corpus_n && s_corpus_done[I] < s_corpus_n &&
@@ -355,6 +378,11 @@ extern "C" void if2_edge_configure(void)
         const char* nc = getenv("EG_NO_CULL");   /* A/B: skinning only */
         if (!(nc && *nc == 0x31)) s_cull_orig = spu_registry_replace(kImage, 0xA798, cull_hook);
         if (!s_cull_orig) fprintf(stderr, "[EG] native culling off%c", 10);
+        const char* nd = getenv("EG_NO_DECOMP");   /* A/B */
+        if (!(nd && *nd == 0x31)) s_dec_orig = spu_registry_replace(kImage, 0x4448, decomp_hook);
+        if (!s_dec_orig) fprintf(stderr, "[EG] native vertex decompression off%c", 10);
+        else if (s_native) atexit([] { fprintf(stderr, "[EG] native decompression: %ld calls, %ld fell back to the SPU code%c",
+                                                (long)s_natd_calls, (long)s_natd_fallback, 10); });
         else if (s_native) atexit([] { fprintf(stderr, "[EG] native culling: %ld calls, %ld fell back to the SPU code%c",
                                                 (long)s_natc_calls, (long)s_natc_fallback, 10); });
     }

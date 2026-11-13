@@ -902,3 +902,239 @@ int if2_eg_cull(uint8_t* ls, uint32_t ectx, uint32_t flavor, u128* r3)
     EG_T(g_eg_cull_t[2] += __rdtsc() - T2; g_eg_cull_t[3] += T0 - TS;)
     return 1;
 }
+
+/* ---- vertex decompression (LS 0x4448: r3 Edge context, r4 the segment config, r5 the segment's pointer table) ----
+ * The job's specialized path for the one stream layout the game uses (anything else runs the SPU code): the
+ * primary stream, 9 bytes a vertex, holds the position as 3 big-endian 16-bit fixed-point values (10 integer
+ * bits, config byte 0x1B) and the normal as a 24-bit unit vector; an optional secondary stream, 3 bytes a
+ * vertex, holds the tangent as a unit vector. Positions: (raw + offset[k]) / 2^6 (the per-mesh offsets at the
+ * input block), w = 1. Unit vector raw24: a = bits 23..14, b = bits 13..4, selector = bits 3..0; A = fma(1+a*2^-23,
+ * K1, K0) (the SPU's 1.0|a mantissa trick), same B, C = |1 - (A^2 + B^2)| ^ 0.5 by frsqest/fi/fm, and the selector's
+ * 16-byte entry of the table at LS 0xF380 is a shuffle pattern (low 31 bits) and sign bits (bit 31) that place C
+ * (with its sign), A and B; its last lane is w (the tangent's handedness). The SPU code works on vertex pairs,
+ * so ceil-to-even vertices are written, and the normal and tangent loops' pipelines each write two zero
+ * quadwords past their table first. Tables: ctx+0x10/0x14/0x18 (the first free slots of ctx+0x170, which gets
+ * the attribute ids 1 2 3), recorded at ctx+0x5C/0x60/0x64; ctx+0x54 and ctx+0x58 get the input address. */
+static const uint8_t k_dec_desc1[32] = {
+    0x02, 0x09, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x08, 0x03, 0x01, 0x06, 0x00, 0x10, 0x00,
+    0x06, 0x09, 0x03, 0x02, 0x03, 0x00, 0x10, 0x00, 0x0A, 0x06, 0x0A, 0x06, 0x0A, 0x06, 0x00, 0x00 };
+static const uint8_t k_dec_desc2[16] = {
+    0x01, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09, 0x03, 0x03, 0x03, 0x00, 0x08, 0x00 };
+
+static int ls_eq(const uint8_t* ls, uint32_t a, const uint8_t* k, uint32_t n)
+{
+    for (uint32_t i = 0; i < n; i++) if (ls[(a + i) & LSM] != k[i]) return 0;
+    return 1;
+}
+static inline uint32_t be24(const uint8_t* ls, uint32_t a)
+{
+    return (uint32_t)ls[a & LSM] << 16 | (uint32_t)ls[(a + 1) & LSM] << 8 | ls[(a + 2) & LSM];
+}
+
+/* two unit vectors (raw24 each) -> two quadwords, the SPU's operations lane for lane */
+static void uv_pair_ref(const uint8_t* ls, uint32_t r0, uint32_t r1, u128* n0, u128* n1)
+{
+    const u128 F = k4(0x3F800000u | (r0 >> 14 & 0x3FFu), 0x3F800000u | (r0 >> 4 & 0x3FFu),
+                      0x3F800000u | (r1 >> 14 & 0x3FFu), 0x3F800000u | (r1 >> 4 & 0x3FFu));
+    const u128 AB = spu_fma(k1(0x46352E7Cu), F, k1(0xC6353150u));
+    const u128 sq = spu_fm(AB, AB), sh = k4(sq._u32[1], sq._u32[2], sq._u32[3], 0);
+    const u128 T = spu_fs(k1(0x3F800000u), spu_fa(sq, sh));
+    const u128 C = spu_fm(T, spu_fi(T, spu_frsqest(T)));
+    const u128 L0 = ldq(ls, 0xF380u + 16u * (r0 & 15u)), L1 = ldq(ls, 0xF380u + 16u * (r1 & 15u));
+    const u128 SGN = k4(0x80000000u, 0x80000000u, 0x80000000u, 0xFFFFFFFFu), M31 = k4(0x7FFFFFFFu, 0x7FFFFFFFu, 0x7FFFFFFFu, 0);
+    const u128 Z3 = k4(0, 0, 0, 0x0C0D0E0Fu);
+    *n0 = spu_shufb(spu_selb(C, L0, SGN), AB, spu_selb(Z3, L0, M31));
+    u128 P1 = spu_selb(Z3, L1, M31);
+    for (int k = 0; k < 3; k++) P1._u32[k] += 0x08080808u;
+    *n1 = spu_shufb(spu_selb(C, L1, SGN), AB, P1);
+}
+
+typedef struct { uint32_t ectx, ptab, nv, n2, in1, in2, ib, tP, tN, tT, w14; int tan; } dec_args;
+
+static int dec_args_init(const uint8_t* ls, uint32_t ectx, uint32_t cfg, uint32_t ptab, dec_args* da)
+{
+    if (ectx & 15u) return 0;
+    const uint32_t d1 = be32(ls, ptab + 0x2C), d2 = be32(ls, ptab + 0x30);
+    if (!ls_eq(ls, d1, k_dec_desc1, 32)) return 0;
+    if (d2 && !ls_eq(ls, d2, k_dec_desc2, 16)) return 0;
+    if (ls[(cfg + 0x1B) & LSM] != 10) return 0;                       /* 10 integer bits: / 2^6 */
+    for (int i = 0; i < 16; i++) if (ls[(ectx + 0x170 + (uint32_t)i) & LSM]) return 0;   /* table slots 0 1 2 */
+    da->ectx = ectx; da->ptab = ptab; da->tan = d2 != 0;
+    da->nv = be16(ls, ectx + 8);
+    if (!da->nv) return 0;
+    da->n2 = (da->nv + 1u) & ~1u;
+    da->w14 = be32(ls, ptab + 0x14); da->in1 = da->w14; da->in2 = be32(ls, ptab + 0x18); da->ib = be32(ls, ptab + 0x28);
+    da->tP = be32(ls, ectx + 0x10); da->tN = be32(ls, ectx + 0x14); da->tT = be32(ls, ectx + 0x18);
+    return 1;
+}
+
+static void dec_ctx(uint8_t* ls, const dec_args* da)
+{
+    const uint32_t c = da->ectx;
+    st32(ls, c + 0x54, da->w14);
+    ls[(c + 0x170) & LSM] = 1; ls[(c + 0x171) & LSM] = 2;
+    st32(ls, c + 0x5C, da->tP); st32(ls, c + 0x60, da->tN);
+    if (da->tan) { ls[(c + 0x172) & LSM] = 3; st32(ls, c + 0x64, da->tT); }
+    st32(ls, c + 0x58, da->w14);
+}
+
+int if2_eg_decomp_ref(uint8_t* ls, uint32_t ectx, uint32_t cfg, uint32_t ptab)
+{
+    dec_args da;
+    if (!dec_args_init(ls, ectx, cfg, ptab, &da)) return 0;
+    const u128 off = k4(be32(ls, da.ib), be32(ls, da.ib + 4), be32(ls, da.ib + 8), 0);
+    stq(ls, da.tN + 16u * da.n2, k1(0)); stq(ls, da.tN + 16u * da.n2 + 16u, k1(0));
+    for (uint32_t v = 0; v < da.n2; v++) {
+        const uint32_t p = da.in1 + 9u * v;
+        u128 val = k4(be16(ls, p) + off._u32[0], be16(ls, p + 2) + off._u32[1], be16(ls, p + 4) + off._u32[2], 0);
+        const u128 ip = spu_csflt(k4((uint32_t)((int32_t)val._u32[0] >> 6), (uint32_t)((int32_t)val._u32[1] >> 6),
+                                     (uint32_t)((int32_t)val._u32[2] >> 6), 0), 155);
+        const u128 fp = spu_cuflt(k4(val._u32[0] << 26, val._u32[1] << 26, val._u32[2] << 26, 0), 123);
+        u128 pos = spu_fa(ip, fp);
+        pos._u32[3] = 0x3F800000u;
+        stq(ls, da.tP + 16u * v, pos);
+    }
+    for (uint32_t v = 0; v < da.n2; v += 2) {
+        u128 n0, n1;
+        uv_pair_ref(ls, be24(ls, da.in1 + 9u * v + 6u), be24(ls, da.in1 + 9u * v + 15u), &n0, &n1);
+        stq(ls, da.tN + 16u * v, n0); stq(ls, da.tN + 16u * v + 16u, n1);
+    }
+    if (da.tan) {
+        stq(ls, da.tT + 16u * da.n2, k1(0)); stq(ls, da.tT + 16u * da.n2 + 16u, k1(0));
+        for (uint32_t v = 0; v < da.n2; v += 2) {
+            u128 t0, t1;
+            uv_pair_ref(ls, be24(ls, da.in2 + 3u * v), be24(ls, da.in2 + 3u * v + 3u), &t0, &t1);
+            stq(ls, da.tT + 16u * v, t0); stq(ls, da.tT + 16u * v + 16u, t1);
+        }
+    }
+    dec_ctx(ls, &da);
+    return 1;
+}
+
+
+/* the fast path: positions as (float)(raw + offset) * 2^-6 (exact: |offset| < 2^23 keeps the sum below 2^24);
+ * unit vectors 4 at a time with host ops (A, B, A^2 + B^2 and 1 - that stay in [-2, 2]: no overflow, and the
+ * RZ/DAZ/FTZ mode plus +0 gives the helpers' results) and the toolkit's frsqest/fi/fm helpers for C; the table
+ * entries 0..11 (checked against the job's table) become byte shuffles. A selector 12..15 (the table's tail is
+ * text) takes the helpers for its pair. */
+static const uint8_t k_dec_lut[12][16] = {
+    { 0x80, 0x01, 0x02, 0x03, 0x10, 0x11, 0x12, 0x13, 0x94, 0x15, 0x16, 0x17, 0xBF, 0x80, 0x00, 0x00 },
+    { 0x00, 0x01, 0x02, 0x03, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0xBF, 0x80, 0x00, 0x00 },
+    { 0x80, 0x01, 0x02, 0x03, 0x10, 0x11, 0x12, 0x13, 0x94, 0x15, 0x16, 0x17, 0x3F, 0x80, 0x00, 0x00 },
+    { 0x00, 0x01, 0x02, 0x03, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x3F, 0x80, 0x00, 0x00 },
+    { 0x90, 0x11, 0x12, 0x13, 0x00, 0x01, 0x02, 0x03, 0x94, 0x15, 0x16, 0x17, 0xBF, 0x80, 0x00, 0x00 },
+    { 0x10, 0x11, 0x12, 0x13, 0x00, 0x01, 0x02, 0x03, 0x14, 0x15, 0x16, 0x17, 0xBF, 0x80, 0x00, 0x00 },
+    { 0x90, 0x11, 0x12, 0x13, 0x00, 0x01, 0x02, 0x03, 0x94, 0x15, 0x16, 0x17, 0x3F, 0x80, 0x00, 0x00 },
+    { 0x10, 0x11, 0x12, 0x13, 0x00, 0x01, 0x02, 0x03, 0x14, 0x15, 0x16, 0x17, 0x3F, 0x80, 0x00, 0x00 },
+    { 0x90, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x80, 0x01, 0x02, 0x03, 0xBF, 0x80, 0x00, 0x00 },
+    { 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x00, 0x01, 0x02, 0x03, 0xBF, 0x80, 0x00, 0x00 },
+    { 0x90, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x80, 0x01, 0x02, 0x03, 0x3F, 0x80, 0x00, 0x00 },
+    { 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x00, 0x01, 0x02, 0x03, 0x3F, 0x80, 0x00, 0x00 } };
+/* per entry: pshufb of the host vector [|C|, A, B, 0] into the big-endian output, then OR the sign of C and w;
+ * k_uvo[parity]: vertex 0 of a pair takes C's sign from the entry's lane 0, vertex 1 from lane 2 */
+static __m128i k_uvp[12], k_uvo[2][12];
+static volatile int k_uv_ready;
+static void dec_tables(void)
+{
+    if (k_uv_ready) return;
+    for (int e = 0; e < 12; e++) {
+        const uint8_t* L = k_dec_lut[e];
+        uint8_t p[16], o0[16], o1[16];
+        memset(o0, 0, 16); memset(o1, 0, 16);
+        for (int j = 0; j < 3; j++) {
+            const uint32_t w = ((uint32_t)L[4 * j] << 24 | (uint32_t)L[4 * j + 1] << 16 | (uint32_t)L[4 * j + 2] << 8 | L[4 * j + 3]) & 0x7FFFFFFFu;
+            const int s = w == 0x00010203u ? 0 : w == 0x10111213u ? 1 : 2;   /* the table above has only these three */
+            for (int b = 0; b < 4; b++) p[4 * j + b] = (uint8_t)(4 * s + 3 - b);
+            if (s == 0) { o0[4 * j] = L[0] & 0x80; o1[4 * j] = L[8] & 0x80; }
+        }
+        for (int b = 0; b < 4; b++) { p[12 + b] = 0x80; o0[12 + b] = o1[12 + b] = L[12 + b]; }
+        memcpy(&k_uvp[e], p, 16); memcpy(&k_uvo[0][e], o0, 16); memcpy(&k_uvo[1][e], o1, 16);
+    }
+    k_uv_ready = 1;
+}
+
+/* 4 unit vectors (raw24, 2 pairs) -> 4 big-endian quadwords at out[0..3] (raw byte pointers) */
+static inline void uv4_fast(const uint32_t* raw, uint8_t* const* out)
+{
+    const __m128i r = _mm_loadu_si128((const __m128i*)raw);
+    const __m128i one = _mm_set1_epi32(0x3F800000), m10 = _mm_set1_epi32(0x3FF);
+    const __m128 FA = _mm_castsi128_ps(_mm_or_si128(one, _mm_and_si128(_mm_srli_epi32(r, 14), m10)));
+    const __m128 FB = _mm_castsi128_ps(_mm_or_si128(one, _mm_and_si128(_mm_srli_epi32(r, 4), m10)));
+    const __m128 K1 = _mm_castsi128_ps(_mm_set1_epi32(0x46352E7C)), K0 = _mm_castsi128_ps(_mm_set1_epi32((int)0xC6353150u));
+    const __m128 A = FMA(K1, FA, K0), B = FMA(K1, FB, K0);
+    __m128 s = _mm_add_ps(FM(A, A), FM(B, B)); s = nz(s);
+    const __m128 T = FS(_mm_set1_ps(1.0f), s);
+    const u128 Tu = spu__u(_mm_castps_si128(T));
+    const __m128 C = _mm_castsi128_ps(spu__v(spu_fm(Tu, spu_fi(Tu, spu_frsqest(Tu)))));
+    __m128 v0 = _mm_and_ps(C, _mm_castsi128_ps(_mm_set1_epi32(0x7FFFFFFF))), v1 = A, v2 = B, v3 = _mm_setzero_ps();
+    _MM_TRANSPOSE4_PS(v0, v1, v2, v3);
+    const __m128 vv[4] = { v0, v1, v2, v3 };
+    for (int k = 0; k < 4; k++) {
+        const uint32_t e = raw[k] & 15u;
+        _mm_storeu_si128((__m128i*)out[k], _mm_or_si128(_mm_shuffle_epi8(_mm_castps_si128(vv[k]), k_uvp[e]), k_uvo[k & 1][e]));
+    }
+}
+
+/* a stream of unit vectors: n2 (even) vertices, stride bytes apart, to table t; 0 when a selector is 12..15 or
+ * the ranges leave the local store (the caller then takes the helpers for the whole stream) */
+static int uv_stream_fast(uint8_t* ls, uint32_t in, uint32_t stride, uint32_t n2, uint32_t t)
+{
+    uint32_t v = 0;
+    for (; v + 4 <= n2; v += 4) {
+        uint32_t raw[4]; uint8_t* out[4];
+        for (int k = 0; k < 4; k++) {
+            const uint8_t* p = ls + in + stride * (v + (uint32_t)k);
+            raw[k] = (uint32_t)p[0] << 16 | (uint32_t)p[1] << 8 | p[2];
+            out[k] = ls + t + 16u * (v + (uint32_t)k);
+        }
+        if ((raw[0] & 12u) == 12u || (raw[1] & 12u) == 12u || (raw[2] & 12u) == 12u || (raw[3] & 12u) == 12u) {
+            u128 a, b;
+            uv_pair_ref(ls, raw[0], raw[1], &a, &b); stq(ls, t + 16u * v, a); stq(ls, t + 16u * v + 16u, b);
+            uv_pair_ref(ls, raw[2], raw[3], &a, &b); stq(ls, t + 16u * v + 32u, a); stq(ls, t + 16u * v + 48u, b);
+            continue;
+        }
+        uv4_fast(raw, out);
+    }
+    if (v < n2) {   /* the last pair */
+        u128 a, b;
+        uv_pair_ref(ls, be24(ls, in + stride * v), be24(ls, in + stride * (v + 1)), &a, &b);
+        stq(ls, t + 16u * v, a); stq(ls, t + 16u * v + 16u, b);
+    }
+    return 1;
+}
+
+int if2_eg_decomp(uint8_t* ls, uint32_t ectx, uint32_t cfg, uint32_t ptab)
+{
+    dec_args da;
+    if (!dec_args_init(ls, ectx, cfg, ptab, &da)) return 0;
+    const int32_t o0 = (int32_t)be32(ls, da.ib), o1 = (int32_t)be32(ls, da.ib + 4), o2 = (int32_t)be32(ls, da.ib + 8);
+    const uint32_t L = SPU_LS_SIZE;
+    const int inrange = da.in1 + 9u * da.n2 + 16u <= L && da.tP + 16u * da.n2 <= L && da.tN + 16u * da.n2 + 32u <= L &&
+                        (!da.tan || (da.in2 + 3u * da.n2 + 16u <= L && da.tT + 16u * da.n2 + 32u <= L)) &&
+                        (da.tP | da.tN | da.tT) % 16u == 0 &&
+                        o0 > -(1 << 23) && o0 < (1 << 23) && o1 > -(1 << 23) && o1 < (1 << 23) && o2 > -(1 << 23) && o2 < (1 << 23) &&
+                        ls_eq(ls, 0xF380u, &k_dec_lut[0][0], sizeof k_dec_lut);
+    if (!inrange) return if2_eg_decomp_ref(ls, ectx, cfg, ptab);
+    dec_tables();
+    stq(ls, da.tN + 16u * da.n2, k1(0)); stq(ls, da.tN + 16u * da.n2 + 16u, k1(0));
+    {   /* positions */
+        const __m128i sel = _mm_setr_epi8(1, 0, -1, -1, 3, 2, -1, -1, 5, 4, -1, -1, -1, -1, -1, -1);
+        const __m128i off = _mm_setr_epi32(o0, o1, o2, 0);
+        const __m128 sc = _mm_setr_ps(1.0f / 64.0f, 1.0f / 64.0f, 1.0f / 64.0f, 0.0f), w1 = _mm_setr_ps(0, 0, 0, 1.0f);
+        const __m128i bs = _mm_setr_epi8(3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12);
+        const uint8_t* p = ls + da.in1;
+        uint8_t* o = ls + da.tP;
+        for (uint32_t v = 0; v < da.n2; v++, p += 9, o += 16) {
+            const __m128i iv = _mm_add_epi32(_mm_shuffle_epi8(_mm_loadu_si128((const __m128i*)p), sel), off);
+            const __m128 f = _mm_add_ps(_mm_mul_ps(_mm_cvtepi32_ps(iv), sc), w1);
+            _mm_storeu_si128((__m128i*)o, _mm_shuffle_epi8(_mm_castps_si128(f), bs));
+        }
+    }
+    uv_stream_fast(ls, da.in1 + 6u, 9u, da.n2, da.tN);
+    if (da.tan) {
+        stq(ls, da.tT + 16u * da.n2, k1(0)); stq(ls, da.tT + 16u * da.n2 + 16u, k1(0));
+        uv_stream_fast(ls, da.in2, 3u, da.n2, da.tT);
+    }
+    dec_ctx(ls, &da);
+    return 1;
+}

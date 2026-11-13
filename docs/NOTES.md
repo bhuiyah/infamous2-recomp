@@ -1,6 +1,21 @@
 # Bring-up notes
 
 Dated log of what was tried and where each run stopped. Newest first.
+## 2026-11-13 — EG1: Edge Geometry vertex decompression as native code, bit-exact (+1.2% / +1.6%)
+
+- **What it is.** The Edge job's vertex decompression (0x4448, 15% of the job), specialized path for the one
+  stream layout the game uses: positions as 3 x 16-bit fixed point (10.6, plus per-mesh offsets), normals and
+  tangents as 24-bit unit vectors (two 10-bit components, the third as sqrt(1 - a^2 - b^2) via frsqest/fi, a
+  4-bit selector into a 16-entry table that places the components, their sign and the tangent's handedness).
+- **Native** (`if2_eg_decomp`): the same operations under the SPU threads' float mode; positions reduce exactly
+  to (raw + offset) / 64; unit vectors 4 at a time with the toolkit's frsqest/fi helpers and the table turned
+  into byte shuffles; it also writes the two zero quadwords the SPU loops' pipelines leave past each table.
+  Any other stream layout, or a selector naming the table's text tail, uses the SPU code / the exact helpers.
+- **Verification.** Offline 80 recorded calls byte-identical; in game EG_VERIFY=2 in both test states, ~1.9M
+  compares over the three native stages, 0 mismatches. Harness ~10k cycles a call (exact reference 25k).
+- **Gain** (gate fight, 2 reps, frame interval): 4 threads 29.45 -> 29.10 ms (+1.2%), 6 threads 21.85 -> 21.50 ms
+  (+1.6%). EG_NO_DECOMP=1 keeps this stage on the SPU code (A/B).
+
 ## 2026-11-13 — EG1: Edge Geometry triangle culling as native code, bit-exact (4 threads +5.9%)
 
 - **What it is.** The Edge job's second-largest stage (0xA798 with its per-vertex pass 0xA3C8; 26% of the job):
