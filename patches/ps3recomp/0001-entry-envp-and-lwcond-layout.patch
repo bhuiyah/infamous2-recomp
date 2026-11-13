@@ -26062,7 +26062,7 @@ index 0000000..c1126c0
 +    return g_fail ? 1 : 0;
 +}
 diff --git a/libs/video/cellGcmSys.c b/libs/video/cellGcmSys.c
-index cdb0464..487b74b 100644
+index cdb0464..5cbc899 100644
 --- a/libs/video/cellGcmSys.c
 +++ b/libs/video/cellGcmSys.c
 @@ -14,8 +14,15 @@
@@ -26154,7 +26154,7 @@ index cdb0464..487b74b 100644
  
      s_gcm_initialized = 1;
      return CELL_OK;
-@@ -758,14 +802,57 @@ static u32 gcm_io2ea(u32 io)
+@@ -758,14 +802,58 @@ static u32 gcm_io2ea(u32 io)
   * recycle path teleports these when it resets a ring without a JUMP command. */
  unsigned long long ps3_ms_now(void)
  {
@@ -26168,6 +26168,7 @@ index cdb0464..487b74b 100644
  }
  
  static u32 s_sema_offset = 0;   /* NV406E semaphore offset (label window) */
++void rsx_vemit_sync(void);       /* rsx_vertex_fetch.c: a sync point for the converted-vertex cache */
 +/* The FIFO offset of the SEMAPHORE_ACQUIRE packet the walker is waiting at
 + * (0xFFFFFFFF: none) and when that wait began. Every path that moves `get`
 + * elsewhere forgets it, so a later acquire at the same offset starts fresh. */
@@ -26216,7 +26217,7 @@ index cdb0464..487b74b 100644
  /* Backlog past which the drain stops honouring one-flip-per-tick and
   * catches up instead. Sized well above a frame's command list so a
   * title that keeps up never sees this path. */
-@@ -845,6 +932,116 @@ static u32 nv309e_swz(u32 x, u32 y, u32 l2w, u32 l2h)
+@@ -845,6 +933,116 @@ static u32 nv309e_swz(u32 x, u32 y, u32 l2w, u32 l2h)
      return off;
  }
  
@@ -26333,7 +26334,7 @@ index cdb0464..487b74b 100644
  static void nv3089_blit(void)
  {
      u32 out_w = s_nv3089.out_sz & 0xFFFF, out_h = s_nv3089.out_sz >> 16;
-@@ -852,6 +1049,9 @@ static void nv3089_blit(void)
+@@ -852,6 +1050,9 @@ static void nv3089_blit(void)
      u32 in_pitch = s_nv3089.in_fmt & 0xFFFF;
      u32 dst_pitch = s_gcm2d.pitch >> 16;
      if (!out_w || !out_h || !in_pitch || !dst_pitch) return;
@@ -26343,7 +26344,7 @@ index cdb0464..487b74b 100644
      /* NV3089_GATE=<file>: log every blit's geometry while <file> exists, so a
       * capture covers the scene of interest instead of the first N since boot. */
      { static const char* gate = (const char*)-1; static unsigned poll; static int open_gate;
-@@ -869,6 +1069,29 @@ static void nv3089_blit(void)
+@@ -869,6 +1070,29 @@ static void nv3089_blit(void)
                       s_nv309e.active, 10);
            }
        } }
@@ -26373,7 +26374,7 @@ index cdb0464..487b74b 100644
      /* A copy out of a surface the live renderer drew exists only on the GPU;
       * mirror 1:1 blits there too (the guest-memory copy below still runs). */
      if (s_nv3089.ds_dx == 0x100000u && s_nv3089.dt_dy == 0x100000u &&
-@@ -925,6 +1148,27 @@ static void nv3089_blit(void)
+@@ -925,6 +1149,27 @@ static void nv3089_blit(void)
          { extern u8* vm_base;
            const u8* sbase = vm_base + src2;
            u8* dbase = vm_base + dst2;
@@ -26401,7 +26402,7 @@ index cdb0464..487b74b 100644
            for (u32 y = 0; y < out_h; y++) {
                u64 sv = ((u64)v0b << 8) + (u64)y * s_nv3089.dt_dy;
                const u8* srow = sbase + (u32)(sv >> 20) * in_pitch;
-@@ -939,6 +1183,7 @@ static void nv3089_blit(void)
+@@ -939,6 +1184,7 @@ static void nv3089_blit(void)
            if (cap && _n < cap) { _n++;
              printf("[NV3089] swizzled %ux%u fmt=0x%X src=0x%08X -> NV309E dst=0x%08X%c",
                     out_w, out_h, f, src2, dst2, 10); } }
@@ -26409,7 +26410,7 @@ index cdb0464..487b74b 100644
          return;
        } }
      /* 0x3 is A8R8G8B8 in the scaled-image format enum. This title uses it for
-@@ -988,23 +1233,30 @@ static void nv3089_blit(void)
+@@ -988,23 +1234,30 @@ static void nv3089_blit(void)
      u32 dbpp = (s_gcm2d.color_fmt == 4u /* R5G6B5 */) ? 2u
               : (s_gcm2d.color_fmt == 1u /* Y8 */)     ? 1u : 4u;
      u32 bpp = (sbpp == dbpp) ? sbpp : 4u;
@@ -26456,7 +26457,7 @@ index cdb0464..487b74b 100644
      { static int _n = 0; static int cap = -1;
        if (cap < 0) { const char* e = getenv("NV3089_DBG"); cap = e ? atoi(e) : 0; }
        if (cap && _n < cap) { _n++;
-@@ -1078,12 +1330,14 @@ static void gcm_2d_method(u32 subch, u32 method, u32 data)
+@@ -1078,12 +1331,14 @@ static void gcm_2d_method(u32 subch, u32 method, u32 data)
              u32 dst_pitch = s_gcm2d.pitch >> 16;
              int local = (s_gcm2d.dst_dma != 0xFEED0001u);
              u32 base = cellGcmResolveLocated(local, s_gcm2d.dst_offset);
@@ -26471,7 +26472,7 @@ index cdb0464..487b74b 100644
              return;
          }
          return;
-@@ -1232,8 +1486,23 @@ void gcm_forget_spu_blocks(void)
+@@ -1232,8 +1487,23 @@ void gcm_forget_spu_blocks(void)
      s_spu_blk_w = 0;
  }
  
@@ -26495,7 +26496,7 @@ index cdb0464..487b74b 100644
      if (!size || size > 0x40000u) return;
      u32 room = 0;
      u32 io = gcm_ea2io_range(ea, &room);
-@@ -1282,6 +1551,7 @@ static u32 gcm_spu_block_for_put(u32 put)
+@@ -1282,6 +1552,7 @@ static u32 gcm_spu_block_for_put(u32 put)
  static void gcm_fifo_resync_why(const char* why, u32* getoff, u32 put)
  {
      static int n = 0;
@@ -26503,7 +26504,7 @@ index cdb0464..487b74b 100644
      if (n++ < 8)
          fprintf(stderr, "[cellGcmSys] FIFO resync (%s) 0x%08X -> put 0x%08X\n",
                  why, *getoff, put);
-@@ -1308,6 +1578,9 @@ static void gcm_fifo_resync_why(const char* why, u32* getoff, u32 put)
+@@ -1308,6 +1579,9 @@ static void gcm_fifo_resync_why(const char* why, u32* getoff, u32 put)
              u32 w = vm_read32(ea);
              if ((w >> 29) != 0 || (w & 0x1FFCu) != 0x0050u) continue;
              u32 dea = gcm_io2ea(io + 4); if (!dea) continue;
@@ -26513,7 +26514,7 @@ index cdb0464..487b74b 100644
              gcm_ref_push_at(vm_read32(dea), io);
              rescued++;
          }
-@@ -1418,12 +1691,218 @@ void* cellGcm_fifo_kick_event(void)
+@@ -1418,12 +1692,218 @@ void* cellGcm_fifo_kick_event(void)
   * the kick above was created, signalled -- and waited on by nobody, so a
   * starved guest still paid the full tick. Waiting here instead costs nothing
   * when no one kicks (the timeout is the old sleep) and drains immediately when
@@ -26733,7 +26734,7 @@ index cdb0464..487b74b 100644
      if (ev) WaitForSingleObject(ev, ms);
      else    Sleep(ms);
  }
-@@ -1436,22 +1915,27 @@ void cellGcm_fifo_kick_wait(unsigned ms)
+@@ -1436,22 +1916,27 @@ void cellGcm_fifo_kick_wait(unsigned ms)
   * order). TryAcquire: a contended poll just reads the current ref. */
  static SRWLOCK s_ref_pub_lock = SRWLOCK_INIT;
  
@@ -26767,7 +26768,7 @@ index cdb0464..487b74b 100644
          dry = (s_ref_qhead == s_ref_qtail);
      }
      ReleaseSRWLockExclusive(&s_ref_pub_lock);
-@@ -1466,12 +1950,105 @@ void cellGcm_rsx_process_fifo(void)
+@@ -1466,12 +1951,105 @@ void cellGcm_rsx_process_fifo(void)
      ReleaseSRWLockExclusive(&s_gcm_fifo_lock);
  }
  
@@ -26874,7 +26875,7 @@ index cdb0464..487b74b 100644
            unsigned long long now = ps3_ms_now();
            if (_t0 == 0) _t0 = now;
            if (now - _t0 >= 2000) {
-@@ -1479,8 +2056,6 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1479,8 +2057,6 @@ static void gcm_rsx_process_fifo_unlocked(void)
                _n = 0; _t0 = now;
            }
        } }
@@ -26883,7 +26884,7 @@ index cdb0464..487b74b 100644
      extern u32 g_rsx_last_reference;
  
      /* A statically-linked libgcm (PS3 firmware modules -- ps1_netemu) never calls
-@@ -1490,7 +2065,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1490,7 +2066,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
       * that does read the context (the ring-recycle heuristic) is separately guarded
       * by s_gcm_ctx_out_ea, which stays 0 on that path. */
      if (!s_gcm_context_ea && !s_gcm_syscall_mode) return;
@@ -26892,7 +26893,7 @@ index cdb0464..487b74b 100644
  
      /* Walk the FIFO exactly like the RSX: chase the guest-written `put` (an IO
       * offset in the control register), decoding method headers and following
-@@ -1512,7 +2087,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1512,7 +2088,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
       * once at init; if the title repoints gCellGcmCurrentContext at a buffer of
       * its own, every field below moves with it and the FIFO the runtime walks
       * stops being the one the title fills. Reported on change, not per tick. */
@@ -26901,7 +26902,7 @@ index cdb0464..487b74b 100644
          static u32 last_ptr = 0xFFFFFFFFu, last_cur = 0xFFFFFFFFu;
          u32 ptr = vm_read32(s_gcm_ctx_out_ea);
          u32 cur = ptr ? vm_read32(ptr + 0x8) : 0;
-@@ -1528,7 +2103,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1528,7 +2104,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
      }
  
      u32 start_off = s_fifo_getoff;
@@ -26910,7 +26911,7 @@ index cdb0464..487b74b 100644
          static int n = 0;
          if (n++ % 60 == 0)
              printf("[DRAIN] getoff=%08X put=%08X ref=%08X ctx.current=%08X\n",
-@@ -1541,7 +2116,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1541,7 +2117,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
       * two very different causes -- we missed the command, or it was never
       * submitted -- and only a direct scan of the ring separates them. */
      { static int scanned = 0;
@@ -26919,7 +26920,7 @@ index cdb0464..487b74b 100644
          unsigned found = 0;
          for (u32 io = 0; io + 8 <= put; io += 4) {
              u32 ea = gcm_io2ea(io); if (!ea) continue;
-@@ -1582,7 +2157,16 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1582,7 +2158,16 @@ static void gcm_rsx_process_fifo_unlocked(void)
       * short of `put` every tick is the signature of a FIFO that can never
       * catch up, and the reason is the whole diagnosis. */
      const char* why = "caught-up";
@@ -26936,7 +26937,7 @@ index cdb0464..487b74b 100644
          u32 ea = gcm_io2ea(s_fifo_getoff);
          if (!ea) {
              /* get is sitting on an IO offset with no mapping -- the title
-@@ -1602,6 +2186,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1602,6 +2187,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
                              s_fifo_getoff, put);
              }
              s_fifo_getoff = put;
@@ -26944,7 +26945,7 @@ index cdb0464..487b74b 100644
              why = "no-io-mapping";
              break;
          }
-@@ -1610,9 +2195,13 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1610,9 +2196,13 @@ static void gcm_rsx_process_fifo_unlocked(void)
           * ring the title is writing. A park in another region is where the
           * walker gave up, not how far it got through the ring. */
          if (s_fifo_getoff < put) s_last_ring_off = s_fifo_getoff + 4;
@@ -26961,7 +26962,7 @@ index cdb0464..487b74b 100644
          u32 type = w >> 29;
  
          if ((w & 0xFFFF0000u) == 0xFEAD0000u) {
-@@ -1635,15 +2224,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1635,15 +2225,18 @@ static void gcm_rsx_process_fifo_unlocked(void)
                if (dbg && (flips <= 8ull || (flips % 200ull) == 0))
                    fprintf(stderr, "[flipword] %llu FIFO flip words decoded%c",
                            flips, 10); }
@@ -26981,7 +26982,7 @@ index cdb0464..487b74b 100644
              /* ...unless the FIFO is badly backlogged. One flip per drain is
               * right while `get` is keeping up with `put`; when it is megabytes
               * behind it is a deadlock, because the title's ring can only be
-@@ -1652,10 +2244,22 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1652,14 +2245,27 @@ static void gcm_rsx_process_fifo_unlocked(void)
               * buffer-full callback can never free space, and AMGL prints
               * "Command Buffer Overflow" forever. Past the threshold keep
               * draining -- the intermediate presents are frames we are too far
@@ -27008,7 +27009,12 @@ index cdb0464..487b74b 100644
              continue;
          }
  
-@@ -1674,12 +2278,33 @@ static void gcm_rsx_process_fifo_unlocked(void)
+         if (type == 1) {                       /* JUMP: 0x20000000 | offset */
++            rsx_vemit_sync();
+             { static int _rd = -1; if (_rd < 0) _rd = getenv("GCM_RECDBG") ? 1 : 0;
+               if (_rd) fprintf(stderr, "[JMP] %08X -> %08X (put=%08X)\n",
+                                s_fifo_getoff, w & 0x1FFFFFFCu, put); }
+@@ -1674,18 +2280,40 @@ static void gcm_rsx_process_fifo_unlocked(void)
                 * re-reads the word, so a patched jump is still followed. */
                if (tgt == s_fifo_getoff) {
                    /* Parked. If the title has meanwhile moved `put` somewhere
@@ -27048,7 +27054,37 @@ index cdb0464..487b74b 100644
                    break;
                }
                s_fifo_getoff = tgt; }
-@@ -1740,21 +2365,130 @@ static void gcm_rsx_process_fifo_unlocked(void)
+             continue;
+         }
+         if ((w & 3) == 2) {                    /* CALL: offset | 2 */
++            rsx_vemit_sync();
+             { u32 tgt = w & 0x1FFFFFFCu;
+               if (!gcm_io2ea(tgt)) { gcm_fifo_bad_branch("CALL", tgt, w); gcm_fifo_resync_why("unmapped-CALL", &s_fifo_getoff, put); break; }
+               s_fifo_calloff = s_fifo_getoff + 4;
+@@ -1693,6 +2321,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+             continue;
+         }
+         if (w == 0x00020000u) {                /* RET */
++            rsx_vemit_sync();
+             s_fifo_getoff = s_fifo_calloff;
+             s_fifo_calloff = 0;
+             continue;
+@@ -1701,6 +2330,14 @@ static void gcm_rsx_process_fifo_unlocked(void)
+             u32 count  = (w >> 18) & 0x7FF;
+             u32 method = w & 0x1FFCu;
+             u32 subch  = (w >> 13) & 7;
++            {   /* a sync point for the converted-vertex cache (rsx_vertex_fetch.h rsx_vemit_sync): another
++                 * subchannel (copies, blits), the NV406E methods (reference, semaphores), labels, reports, and
++                 * the driver range */
++                const u32 mlast = (type == 0) ? method + 4u * (count ? count - 1u : 0u) : method;
++                if (subch || method < 0x100u || method >= 0xE000u ||
++                    (method <= 0x1D74u && mlast >= 0x1D6Cu) || (method <= 0x1800u && mlast >= 0x1800u))
++                    rsx_vemit_sync();
++            }
+             /* TCONST_FIFO=1: how the title actually streams vertex constants.
+              * NV4097_SET_TRANSFORM_CONSTANT is a 32-register window; if a block
+              * arrives NON-INCREMENTING then every dword carries the same method
+@@ -1740,21 +2377,130 @@ static void gcm_rsx_process_fifo_unlocked(void)
                      u32 m = (type == 0) ? method + i * 4 : method;
                      u32 v = vm_read32(dea);
                      u32 la = GCM_LABEL_GUEST_BASE + (s_sema_offset & 0xFFFFu);
@@ -27190,7 +27226,7 @@ index cdb0464..487b74b 100644
                  s_fifo_getoff += 4 + count * 4;
                  continue;
              }
-@@ -1768,9 +2502,9 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1768,9 +2514,9 @@ static void gcm_rsx_process_fifo_unlocked(void)
                   * is not a 2D method at all: it tells the RSX to raise a
                   * USER_CMD interrupt, which is what ps1_netemu's flip path
                   * blocks on. */
@@ -27203,7 +27239,7 @@ index cdb0464..487b74b 100644
                        fprintf(stderr, "[subch7] method=0x%04X data=0x%08X\n",
                                m, vm_read32(dea)); }
                  if (subch == 7 && m == 0x0B00u) {
-@@ -1788,9 +2522,8 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1788,9 +2534,8 @@ static void gcm_rsx_process_fifo_unlocked(void)
                   * title binds to a subchannel is what says which engine that
                   * subchannel drives; comparing subchannel 1 against subchannel 0
                   * turns the routing below from a guess into a reading. */
@@ -27215,7 +27251,7 @@ index cdb0464..487b74b 100644
                        static unsigned seen[8]; static int have[8];
                        const unsigned h = vm_read32(dea);
                        if (subch < 8 && (!have[subch] || seen[subch] != h)) {
-@@ -1812,16 +2545,17 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1812,16 +2557,17 @@ static void gcm_rsx_process_fifo_unlocked(void)
                   * for every draw in the game. Treat the subchannels the 2D path
                   * does not claim as 3D. GCM_SUBCH1_2D=1 restores the old split.
                   */
@@ -27239,7 +27275,7 @@ index cdb0464..487b74b 100644
                      if (vw && vm_read32(dea) == vw) {
                          static int vn; if (vn++ < 64)
                              printf("[valwatch] subch=%u method=0x%04X = 0x%08X get=0x%X%c", subch, m, vw, s_fifo_getoff, 10);
-@@ -1840,23 +2574,21 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1840,23 +2586,21 @@ static void gcm_rsx_process_fifo_unlocked(void)
                   * engine (caner / canersaka). Inert unless RSX_LIVE_DRAW is set.
                   * It wants the raw method with its subchannel bits -- it
                   * canonicalises with & 0x1FFC itself. */
@@ -27269,7 +27305,7 @@ index cdb0464..487b74b 100644
                    if (fdbg) {
                        static long long n_be = 0, n_va = 0, n_ia = 0, tick = 0;
                        const u32 cm = m & 0x1FFCu;
-@@ -1867,6 +2599,11 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1867,6 +2611,11 @@ static void gcm_rsx_process_fifo_unlocked(void)
                            printf("[feed] begin_end=%lld draw_arrays=%lld draw_index=%lld\n",
                                   n_be, n_va, n_ia), fflush(stdout);
                    } }
@@ -27281,7 +27317,7 @@ index cdb0464..487b74b 100644
  
                  /* Driver methods (0xE9xx, 0xEBxx) occupy bits 2-15 of the
                   * FIFO word; the standard 11-bit extraction (w & 0x1FFC)
-@@ -1874,11 +2611,20 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1874,11 +2623,20 @@ static void gcm_rsx_process_fifo_unlocked(void)
                   * the draw-engine call above does. */
                  { const u32 mfull = (subch << 13) | m;
                  if (mfull == 0xEB00u || mfull == 0xEB04u) {
@@ -27304,7 +27340,7 @@ index cdb0464..487b74b 100644
                      /* NV406E_SET_REFERENCE: queue the fence value for PACED
                       * publication (gcm_ref_publish below) instead of letting a
                       * later fence in the same batch overwrite it. */
-@@ -1887,14 +2633,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1887,14 +2645,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
                       * area. Sample counts are not measured, so a ZPASS query
                       * reports "visible" -- the conservative answer; reading 0
                       * tells the title every queried object is occluded. */
@@ -27320,7 +27356,7 @@ index cdb0464..487b74b 100644
                  } else
                      gcm_2d_method(subch, m, vm_read32(dea));
                  }
-@@ -1932,32 +2671,40 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -1932,32 +2683,40 @@ static void gcm_rsx_process_fifo_unlocked(void)
       * ponytail: consecutive-budget-burn is a heuristic, not a proof. The real
       * fix is knowing which buffer the RSX is bound to -- that needs the
       * SetQueueHandler / context-switch path modelled, not a walker rule. */
@@ -27373,7 +27409,7 @@ index cdb0464..487b74b 100644
          static int n2 = 0;
          if (n2++ % 60 == 0)
              fprintf(stderr, "[DRAINEND] %s: %08X -> %08X (%u bytes), put=%08X\n",
-@@ -2019,6 +2766,10 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2019,6 +2778,10 @@ static void gcm_rsx_process_fifo_unlocked(void)
           * comes (The Simpsons Arcade Game froze at its 4th recycle). The next
           * pass drains to `put` and recycles then. */
          if (!strcmp(why, "flip") && s_fifo_getoff != put) head_consumed = 0;
@@ -27384,7 +27420,7 @@ index cdb0464..487b74b 100644
          /* Only once the title has been SEEN to overrun. Near `end` is also
           * where a title whose callback does recycle sits just before calling
           * it: Tornado Outbreak's steps its context through 64 KB segments of a
-@@ -2026,9 +2777,9 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2026,9 +2789,9 @@ static void gcm_rsx_process_fifo_unlocked(void)
           * behind its callback's bookkeeping -- which then waited forever for a
           * GET that could not arrive. A callback that declines (AMGL's) always
           * overruns first, so the first overrun is recycled by the path above
@@ -27397,7 +27433,7 @@ index cdb0464..487b74b 100644
          if (begin && end > begin && cur >= begin && cur + GCM_RECYCLE_SLACK >= end
                  && head_consumed && s_title_overran) {
              u32 io_begin = gcm_ea2io(begin);
-@@ -2038,6 +2789,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2038,6 +2801,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
                  vm_write32(ctx + 0x8, begin);                 /* current = begin */
                  vm_write32(GCM_CONTROL_GUEST_ADDR + 0, io_begin);  /* put */
                  s_fifo_getoff = io_begin;                          /* get */
@@ -27405,7 +27441,7 @@ index cdb0464..487b74b 100644
                  put = io_begin;
                  static int n = 0;
                  if (n++ < 8)
-@@ -2048,6 +2800,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2048,6 +2812,7 @@ static void gcm_rsx_process_fifo_unlocked(void)
          }
      }
  
@@ -27413,7 +27449,7 @@ index cdb0464..487b74b 100644
      g_gcm_fifo_drained_ea = gcm_io2ea(s_fifo_getoff);
      /* GCM_GET_EQ_PUT=1: publish `get` as having reached `put` rather than where
       * the walker actually is. A probe, not a fix -- it removes the back-pressure
-@@ -2059,9 +2812,51 @@ static void gcm_rsx_process_fifo_unlocked(void)
+@@ -2059,9 +2824,51 @@ static void gcm_rsx_process_fifo_unlocked(void)
        if (eq < 0) { const char* e = getenv("GCM_GET_EQ_PUT"); eq = e ? atoi(e) : 0; }
        vm_write32(GCM_CONTROL_GUEST_ADDR + 4, eq ? put : s_fifo_getoff); }
  
@@ -27466,7 +27502,7 @@ index cdb0464..487b74b 100644
  }
  
  /* FIFO command-buffer-full callback body. The title's inline gcmReserve calls
-@@ -2114,6 +2909,10 @@ void cellGcm_fifo_recycle(u32 ctx_ea)
+@@ -2114,6 +2921,10 @@ void cellGcm_fifo_recycle(u32 ctx_ea)
           * word at `current` before the jump lands there. */
          atomic_thread_fence(memory_order_release);
          vm_write32(GCM_CONTROL_GUEST_ADDR + 0, io_begin);        /* put = begin */
@@ -27477,7 +27513,7 @@ index cdb0464..487b74b 100644
      }
  
      /* Wait (bounded ~2s) for the walker to consume the tail + take the jump so
-@@ -2167,6 +2966,15 @@ s32 cellGcmSetDisplayBuffer(u32 bufferId, u32 offset, u32 pitch,
+@@ -2167,6 +2978,15 @@ s32 cellGcmSetDisplayBuffer(u32 bufferId, u32 offset, u32 pitch,
  /* Backend query (not a guest API): is this raw RSX offset a registered
   * display buffer? Used to split display draws (-> backbuffer) from
   * offscreen render-to-texture passes. */
@@ -27493,7 +27529,7 @@ index cdb0464..487b74b 100644
  int cellGcmOffsetIsDisplay(u32 offset)
  {
      for (int i = 0; i < CELL_GCM_MAX_DISPLAY_BUFFER_NUM; i++)
-@@ -2187,8 +2995,294 @@ u32 cellGcm_display_buffer_count(void)
+@@ -2187,8 +3007,294 @@ u32 cellGcm_display_buffer_count(void)
      return n;
  }
  
@@ -27513,7 +27549,7 @@ index cdb0464..487b74b 100644
 + * the old path; fractional rates such as 37.5 allowed), live: a change
 + * re-bases the deadline at the next flip. */
 +static double gcm_fps_cap_hz(void)
- {
++{
 +    static int env = -2;                    /* -1: FPS_CAP not set */
 +    static opt_id id = -2;
 +    if (env == -2) {
@@ -27657,7 +27693,7 @@ index cdb0464..487b74b 100644
 +#endif
 +
 +static void gcm_vsync_pace(void)
-+{
+ {
 +#ifdef _WIN32
 +    pace_parse();
 +    if (s_pace_mode <= 0) return;
@@ -27789,7 +27825,7 @@ index cdb0464..487b74b 100644
      /* GCM_FLIPCOUNT=1: every flip, with a timestamp. FLIP_DBG caps at 20 lines,
       * which answers "did it ever flip?" and not "is it still flipping, and how
       * fast?" -- the question that matters when a title stops appearing on
-@@ -2245,6 +3339,7 @@ static s32 gcm_flip_request(u32 bufferId, int in_fifo)
+@@ -2245,6 +3351,7 @@ static s32 gcm_flip_request(u32 bufferId, int in_fifo)
      if (!in_fifo) {
          s_current_display_buffer_id = bufferId;
          s_flip_pending = 1;   /* ticker: present BEFORE the next drain */
@@ -27797,7 +27833,7 @@ index cdb0464..487b74b 100644
          s_flip_request_count++;
      }
      /* Flip requested but not yet shown: a subsequent cellGcmSetWaitFlip blocks
-@@ -2267,7 +3362,8 @@ static s32 gcm_flip_request(u32 bufferId, int in_fifo)
+@@ -2267,7 +3374,8 @@ static s32 gcm_flip_request(u32 bufferId, int in_fifo)
      return CELL_OK;
  }
  
@@ -27807,7 +27843,7 @@ index cdb0464..487b74b 100644
  
  /* The real _cellGcmSetFlipCommand appends the flip to the command buffer, so
   * the RSX flips once it has executed everything queued before it. Firing it
-@@ -2283,6 +3379,22 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
+@@ -2283,6 +3391,22 @@ static int gcm_flip_into_fifo(u32 ctx, u32 bufferId)
      if (!ctx || bufferId >= CELL_GCM_MAX_DISPLAY_BUFFER_NUM ||
          !s_display_buffer_set[bufferId]) return 0;
      const u32 end = vm_read32(ctx + 4), cur = vm_read32(ctx + 8);
@@ -27830,7 +27866,7 @@ index cdb0464..487b74b 100644
      /* Never near the end: those bytes are the title's reserve before its
       * ring wraps, and the recycle above keys on them. */
      if (cur + 8 + GCM_RECYCLE_SLACK > end || gcm_ea2io(cur) == 0xFFFFFFFFu) return 0;
-@@ -2323,6 +3435,7 @@ s32 cellGcmSetFlipCommandWithWaitLabel(u32 bufferId, u32 labelIndex, u32 labelVa
+@@ -2323,6 +3447,7 @@ s32 cellGcmSetFlipCommandWithWaitLabel(u32 bufferId, u32 labelIndex, u32 labelVa
      /* Wait until the label reaches the expected value (instant in HLE). Labels
       * live in guest memory (see cellGcmGetLabelAddress) so the game can poll. */
      vm_write32(GCM_LABEL_GUEST_BASE + labelIndex * GCM_LABEL_STRIDE, labelValue);
@@ -27838,7 +27874,7 @@ index cdb0464..487b74b 100644
  
      return cellGcmSetFlipCommand(bufferId);
  }
-@@ -2342,6 +3455,7 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
+@@ -2342,6 +3467,7 @@ s32 cellGcmSetPrepareFlip(void* ctx, u32 bufferId)
  
      s_current_display_buffer_id = bufferId;
      s_flip_status = CELL_GCM_FLIP_STATUS_DONE;
@@ -27846,7 +27882,7 @@ index cdb0464..487b74b 100644
      s_flip_request_count++;
      s_last_flip_time = get_timestamp_ns();
  
-@@ -2889,14 +4003,45 @@ s32 cellGcmBindTile(u8 index)
+@@ -2889,14 +4015,45 @@ s32 cellGcmBindTile(u8 index)
      return CELL_OK;
  }
  
@@ -27896,7 +27932,7 @@ index cdb0464..487b74b 100644
      return CELL_OK;
  }
  
-@@ -2919,6 +4064,7 @@ s32 cellGcmUnbindZcull(u8 index)
+@@ -2919,6 +4076,7 @@ s32 cellGcmUnbindZcull(u8 index)
  
      printf("[cellGcmSys] UnbindZcull(index=%u)\n", index);
      s_zcull[index].bound = 0;
@@ -27904,7 +27940,7 @@ index cdb0464..487b74b 100644
      return CELL_OK;
  }
  
-@@ -3023,8 +4169,15 @@ s32 cellGcmSetDefaultFifoSize(u32 size)
+@@ -3023,8 +4181,15 @@ s32 cellGcmSetDefaultFifoSize(u32 size)
  /* NID: 0x21397818 */
  s32 _cellGcmSetFlipCommand(void* ctx, u32 bufferId)
  {
@@ -27922,7 +27958,7 @@ index cdb0464..487b74b 100644
      return cellGcmSetFlipCommand(bufferId);
  }
  
-@@ -3032,7 +4185,11 @@ s32 _cellGcmSetFlipCommand(void* ctx, u32 bufferId)
+@@ -3032,7 +4197,11 @@ s32 _cellGcmSetFlipCommand(void* ctx, u32 bufferId)
  s32 _cellGcmSetFlipCommandWithWaitLabel(void* ctx, u32 bufferId,
                                          u32 labelIndex, u32 labelValue)
  {
@@ -27935,7 +27971,7 @@ index cdb0464..487b74b 100644
      return cellGcmSetFlipCommandWithWaitLabel(bufferId, labelIndex, labelValue);
  }
  
-@@ -3453,4 +4610,272 @@ void cellGcm_syscall_set_fifo(u32 put, u32 get)
+@@ -3453,4 +4622,272 @@ void cellGcm_syscall_set_fifo(u32 put, u32 get)
      vm_write32(GCM_CONTROL_GUEST_ADDR + 4, get);
      s_fifo_getoff  = get;
      s_fifo_calloff = 0;
@@ -69562,7 +69598,7 @@ index 0000000..114f6db
 +
 +#endif /* RSX_UPSCALE_H */
 diff --git a/libs/video/rsx_vertex_fetch.c b/libs/video/rsx_vertex_fetch.c
-index 3e46724..b4a5e9e 100644
+index 3e46724..6b4afe9 100644
 --- a/libs/video/rsx_vertex_fetch.c
 +++ b/libs/video/rsx_vertex_fetch.c
 @@ -6,6 +6,35 @@
@@ -69644,7 +69680,7 @@ index 3e46724..b4a5e9e 100644
      default:
          { static int t = -1; if (t < 0) t = getenv("VTX_TYPEDBG") ? 1 : 0;
            if (t) { static u32 seen = 0;
-@@ -107,3 +152,2087 @@ void rsx_fetch_attrib(const rsx_state* st, int idx, u32 vi, float out[4])
+@@ -107,3 +152,2152 @@ void rsx_fetch_attrib(const rsx_state* st, int idx, u32 vi, float out[4])
          break;
      }
  }
@@ -70655,6 +70691,34 @@ index 3e46724..b4a5e9e 100644
 +    return best;
 +}
 +
++static unsigned long long g_vc_hits_rep, g_vc_hits_all, g_vc_rep_bytes, g_vc_all_bytes;   /* VEMIT_STATS: hits already used this batch */
++static unsigned long long g_vc_skipped, g_vc_skip_bytes, g_vc_syncs;                        /* VEMIT_STATS: hashes skipped */
++static u32 g_vc_epoch = 1;
++void rsx_vemit_sync(void) { g_vc_epoch++; g_vc_syncs++; }
++static int rsx_vc_skip_on(void)
++{
++    static int v = -1;
++    if (v < 0) { const char* e = getenv("VC_SKIPHASH"); v = !(e && *e == '0'); }
++    return v;
++}
++/* An entry for exactly this key (signature, range, stride) is in the table: the range was converted before
++ * (rsx_vc_get still checks its content). VC_PEEK=0: off (A/B). */
++static int rsx_vc_peek(const rsx_vcache* c, u64 sig, u32 vlo, u32 vhi, u32 stride)
++{
++    const u32 m = c->nent - 1u, slot = rsx_vc_slot(c, sig, vlo, vhi, stride);
++    for (u32 i = 0; i < 8; i++) {
++        const rsx_vcache_ent* q = &c->ent[(slot + i) & m];
++        if (q->slab_gen && q->sig == sig && q->lo == vlo && q->hi == vhi && q->stride == stride) return 1;
++    }
++    return 0;
++}
++static int rsx_vc_peek_on(void)
++{
++    static int v = -1;
++    if (v < 0) { const char* e = getenv("VC_PEEK"); v = !(e && *e == '0'); }
++    return v;
++}
++
 +/* rsx_vcache_get; sigp: rsx_vfetch_plan_sig(p, 1) when the caller already has
 + * it (VEMIT_FAST), else NULL. */
 +static int rsx_vc_get(rsx_vcache* c, const rsx_vfetch_plan* p, u32 stride,
@@ -70689,6 +70753,17 @@ index 3e46724..b4a5e9e 100644
 +        if (*f != k) { *f = k; c->held++; return 0; }
 +    }
 +    const int live = e && rsx_vc_live(c, e);
++    /* the same range, hashed (or converted) earlier in this batch with no sync point since: the guest memory
++     * it reads has not changed as far as the command stream is concerned -- serve it as the hit it was */
++    if (live && e->vbat == batch && e->vep == g_vc_epoch && e->slab != c->evac && rsx_vc_skip_on()) {
++        c->slab_last[e->slab] = batch;
++        e->dyn = 0; e->last = batch;
++        *g = e->g; *hit = 1; c->hits++;
++        g_vc_skipped++; g_vc_skip_bytes += bytes;
++        if (dg) { rsx_vcache_dg* s = &dg->ent[e - c->ent]; s->last = batch; s->hits++; }
++        if (c->ver) rsx_vcv_serve(c, p, arena, e->g, n, stride, batch);   /* VCACHE_VERIFY */
++        return 1;
++    }
 +    /* admit2: a new key whose probe window holds only ranges the frames still
 +     * use is refused before anything is hashed or allocated (nothing below
 +     * changes the table before the victim is taken) */
@@ -70723,6 +70798,7 @@ index 3e46724..b4a5e9e 100644
 +        rsx_ve_convert(p, NULL, p->vlo, n, arena + go, stride);
 +        rsx_vc_live_sub(c, e);
 +        e->g = go; e->slab = (u16)slab; e->slab_gen = c->slab_gen[slab]; e->dyn = 0; e->last = batch;
++        e->vbat = batch; e->vep = g_vc_epoch;
 +        c->slab_live[slab] += (u32)bytes;
 +        *g = go; c->moved++;
 +        if (dg) { rsx_vcache_dg* s = &dg->ent[e - c->ent]; s->last = batch; s->hits++; }
@@ -70730,8 +70806,11 @@ index 3e46724..b4a5e9e 100644
 +        return 1;
 +    }
 +    if (live && e->h == h) {
++        g_vc_hits_all++; g_vc_all_bytes += bytes;
++        if (e->last == batch) { g_vc_hits_rep++; g_vc_rep_bytes += bytes; }
 +        c->slab_last[e->slab] = batch;
 +        e->dyn = 0; e->last = batch;
++        e->vbat = batch; e->vep = g_vc_epoch;
 +        *g = e->g; *hit = 1; c->hits++;
 +        if (dg) { rsx_vcache_dg* s = &dg->ent[e - c->ent]; s->last = batch; s->hits++; }
 +        if (c->ver) rsx_vcv_serve(c, p, arena, e->g, n, stride, batch);   /* VCACHE_VERIFY */
@@ -70763,6 +70842,7 @@ index 3e46724..b4a5e9e 100644
 +    victim->lo = p->vlo; victim->hi = p->vhi; victim->stride = stride;
 +    victim->slab = (u16)slab; victim->slab_gen = c->slab_gen[slab];
 +    victim->dyn = dyn; victim->bypass = 0; victim->last = batch;
++    victim->vbat = batch; victim->vep = g_vc_epoch;
 +    *g = go; c->misses++;
 +    if (c->ver) rsx_vcv_serve(c, p, arena, go, n, stride, batch);   /* VCACHE_VERIFY */
 +    return 1;
@@ -71504,7 +71584,8 @@ index 3e46724..b4a5e9e 100644
 +static int rsx_vs_on = -1;
 +static struct { unsigned long long ent[8], idx[8], conv[8], spanmax[8], cyc[8]; unsigned long long t0; int last; unsigned long long sub[5];
 +                unsigned long long rent[3], ridx[3], rcyc[3], rcat[3][8], rmask[4]; u32 rmaskv[4];
-+                unsigned long long st_t[5], st_conv; unsigned long long rsub[3][5], rconv[3]; } rsx_vs;
++                unsigned long long st_t[5], st_conv; unsigned long long rsub[3][5], rconv[3];
++                unsigned long long cullc[6]; u64 cullk[6]; unsigned long long hp[3], same[2]; } rsx_vs;
 +/* the stream-only range (rsx_vemit_set_stream_range) */
 +static u32 s_strm_lo, s_strm_hi;
 +/* VEMIT_STATS ring census: a draw is "ring" when an enabled attribute lies in the stream-only range (a title's
@@ -71534,8 +71615,12 @@ index 3e46724..b4a5e9e 100644
 +        fprintf(stderr, "[VSTATS] per 2s:");
 +        for (int i = 0; i < 8; i++)
 +            if (rsx_vs.ent[i]) fprintf(stderr, " %s e%llu i%llu c%llu smax%llu Mcyc%llu;", rsx_vs_name[i], rsx_vs.ent[i], rsx_vs.idx[i], rsx_vs.conv[i], rsx_vs.spanmax[i], rsx_vs.cyc[i] / 1000000ull);
-+        fprintf(stderr, " | hit Mcyc: idx %llu plan %llu get %llu emit %llu%c", rsx_vs.sub[0] / 1000000ull,
-+                rsx_vs.sub[1] / 1000000ull, rsx_vs.sub[2] / 1000000ull, rsx_vs.sub[3] / 1000000ull, 10);
++        fprintf(stderr, " | hashed hits used again in their batch %llu of %llu (%llu of %llu MB) | hash skipped %llu (%llu MB), syncs %llu",
++                g_vc_hits_rep, g_vc_hits_all, g_vc_rep_bytes >> 20, g_vc_all_bytes >> 20, g_vc_skipped, g_vc_skip_bytes >> 20, g_vc_syncs);
++        g_vc_hits_rep = g_vc_hits_all = g_vc_rep_bytes = g_vc_all_bytes = g_vc_skipped = g_vc_skip_bytes = g_vc_syncs = 0;
++        fprintf(stderr, " | hit Mcyc: idx %llu plan %llu (init %llu sigs %llu density %llu) get %llu emit %llu%c", rsx_vs.sub[0] / 1000000ull,
++                rsx_vs.sub[1] / 1000000ull, rsx_vs.hp[0] / 1000000ull, rsx_vs.hp[1] / 1000000ull, rsx_vs.hp[2] / 1000000ull,
++                rsx_vs.sub[2] / 1000000ull, rsx_vs.sub[3] / 1000000ull, 10);
 +        static const char* const rn[3] = { "noring", "ringonly", "ringmixed" };
 +        fprintf(stderr, "[VSTATS-RING]");
 +        for (int r = 0; r < 3; r++) {
@@ -71544,6 +71629,9 @@ index 3e46724..b4a5e9e 100644
 +            for (int i = 0; i < 8; i++) if (rsx_vs.rcat[r][i]) fprintf(stderr, "%s %llu ", rsx_vs_name[i], rsx_vs.rcat[r][i]);
 +            fprintf(stderr, ");");
 +        }
++        fprintf(stderr, " ring cull (enable face front):");
++        for (int k = 0; k < 6; k++) if (rsx_vs.cullc[k]) fprintf(stderr, " %u/%04X/%04X x%llu", (u32)(rsx_vs.cullk[k] >> 32),
++                                                                   (u32)(rsx_vs.cullk[k] >> 16) & 0xFFFFu, (u32)rsx_vs.cullk[k] & 0xFFFFu, rsx_vs.cullc[k]);
 +        fprintf(stderr, " ring masks:");
 +        for (int k = 0; k < 4; k++) if (rsx_vs.rmask[k]) fprintf(stderr, " %04X x%llu", rsx_vs.rmaskv[k], rsx_vs.rmask[k]);
 +        fprintf(stderr, "%c", 10);
@@ -71617,6 +71705,8 @@ index 3e46724..b4a5e9e 100644
 +    const unsigned long long vt1 = rsx_vs_on > 0 ? __rdtsc() : 0;
 +    rsx_vfetch_plan plan;
 +    rsx_ve_plan_init(&plan, st, e->mask, lo, hi, pf);
++    const unsigned long long vtp = rsx_vs_on > 0 ? __rdtsc() : 0;
++    unsigned long long vts = 0;
 +
 +    /* The reference's density test, with the cache key (and the dedupe key,
 +     * in the same pass) computed first for an entry that can reach the cache
@@ -71636,12 +71726,16 @@ index 3e46724..b4a5e9e 100644
 +        vs_cat = !cand ? 3 : (!plan.hashable || (stride & 15u)) ? 5 : 4;
 +        if (cand && plan.hashable && !(stride & 15u)) {
 +            rsx_ve_plan_sigs(&plan, &sig0, &sig1); have0 = have1 = 1;
++            if (rsx_vs_on > 0) vts = __rdtsc();
 +            if (pf) {
 +                const rsx_vcache_ent* q = &e->vc->ent[rsx_vc_slot(e->vc, sig1, lo, hi, stride)];
 +                RSX_VE_PREFETCH(q); RSX_VE_PREFETCH((const u8*)q + 64);
 +            }
 +        }
 +        if (span <= 16u) dense = 1;
++        /* a range the cache already holds: take it (cheaper than the stream path whatever the density, and the
++         * same picture) without counting the distinct indices */
++        else if (have1 && rsx_vc_peek_on() && rsx_vc_peek(e->vc, sig1, lo, hi, stride)) dense = 1;
 +        else if (cand) {
 +            const u32 uniq = rsx_ve_distinct_fast(gvi, used, lo, span);
 +            dense = rsx_vc_dense(span, uniq);
@@ -71656,6 +71750,7 @@ index 3e46724..b4a5e9e 100644
 +            rsx_ve_emit_ib(e->ib, vis, nout, e0 - lo);
 +            if (rsx_vs_on > 0 && hit) {
 +                rsx_vs.sub[0] += vt1 - rsx_vs.sub[4]; rsx_vs.sub[1] += vt2 - vt1;
++                rsx_vs.hp[0] += vtp - vt1; if (vts) { rsx_vs.hp[1] += vts - vtp; rsx_vs.hp[2] += vt2 - vts; }
 +                rsx_vs.sub[2] += vt3 - vt2; rsx_vs.sub[3] += __rdtsc() - vt3;
 +            }
 +            if (!hit) e->converted = hi - lo + 1u;
@@ -71723,6 +71818,12 @@ index 3e46724..b4a5e9e 100644
 +        for (int k = 0; k < 4; k++) rsx_vs.rsub[rc][k] += rsx_vs.st_t[k];
 +        rsx_vs.rconv[rc] += rsx_vs.st_conv;
 +        memset(rsx_vs.st_t, 0, sizeof rsx_vs.st_t); rsx_vs.st_conv = 0;
++        if (rc) {   /* the RSX cull state of ring draws (EG3 gate) */
++            const u64 ck = (u64)(u32)(e->st->cull_face_enable != 0) << 32 | (u64)(e->st->cull_face & 0xFFFFu) << 16 | (e->st->front_face & 0xFFFFu);
++            int k = 0;
++            while (k < 6 && rsx_vs.cullc[k] && rsx_vs.cullk[k] != ck) k++;
++            if (k < 6) { rsx_vs.cullk[k] = ck; rsx_vs.cullc[k]++; }
++        }
 +        if (rc) {   /* the attribute sets that come from the ring (4 most common, first come) */
 +            int k = 0;
 +            while (k < 4 && rsx_vs.rmask[k] && rsx_vs.rmaskv[k] != (rm | (rc == 2 ? 0x10000u : 0u))) k++;
@@ -71733,7 +71834,7 @@ index 3e46724..b4a5e9e 100644
 +    return rsx_ve_fast_on() ? rsx_vemit_run_fast(e) : rsx_vemit_run_ref(e);
 +}
 diff --git a/libs/video/rsx_vertex_fetch.h b/libs/video/rsx_vertex_fetch.h
-index a52a2e1..b878256 100644
+index a52a2e1..ec4fe54 100644
 --- a/libs/video/rsx_vertex_fetch.h
 +++ b/libs/video/rsx_vertex_fetch.h
 @@ -32,6 +32,7 @@
@@ -71744,7 +71845,7 @@ index a52a2e1..b878256 100644
  
  #ifdef __cplusplus
  extern "C" {
-@@ -68,6 +69,361 @@ float rsx_rd_half_be(const u8* p);  /* 2-byte IEEE half -> float  */
+@@ -68,6 +69,369 @@ float rsx_rd_half_be(const u8* p);  /* 2-byte IEEE half -> float  */
   */
  void rsx_fetch_attrib(const rsx_state* st, int idx, u32 vi, float out[4]);
  
@@ -71934,10 +72035,13 @@ index a52a2e1..b878256 100644
 +    u32 slab_gen;
 +    u16 slab;
 +    u8  dyn, bypass;
-+    u32 last;               /* batch of its last use (admit2's victim; in
-+                             * what was padding: 48 bytes either way)      */
++    u32 last;               /* batch of its last use (admit2's victim)      */
++    u32 vbat, vep;          /* batch and sync epoch its content was last
++                             * hashed (or converted) in: a hit in the same
++                             * pair skips the hash (rsx_vemit_sync)        */
++    u32 pad[2];
 +} rsx_vcache_ent;
-+_Static_assert(sizeof(rsx_vcache_ent) == 48, "rsx_vcache_ent: last sits in the old padding");
++_Static_assert(sizeof(rsx_vcache_ent) == 64, "rsx_vcache_ent: one cache line");
 +
 +/* VCACHE_STATS (diagnostic; the backend's [VCSTAT] census): beside the
 + * table, each entry's admission batch, last use and hits, and a set of every
@@ -72094,6 +72198,11 @@ index a52a2e1..b878256 100644
 + * cache (the density count, signatures and probe a ring draw would only waste) and takes the stream path.
 + * 0, 0 = none (the default). */
 +void rsx_vemit_set_stream_range(u32 lo, u32 hi);
++/* A sync point in the command stream: anything that lets another processor run on (a label, semaphore,
++ * report, reference write), changes where commands come from (jump, call, return), or is not a 3D-class
++ * method (copies, blits). Guest memory may change from here on as far as the command stream is concerned, so
++ * converted-vertex cache hits hash their range again (VC_SKIPHASH=0: always hash). */
++void rsx_vemit_sync(void);
 +
 +/* Prefetch hint for an entry about to be emitted: the index span (indexed) or
 + * the head of each enabled attribute array from `first` (non-indexed). Call

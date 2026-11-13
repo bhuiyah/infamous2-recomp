@@ -1,6 +1,26 @@
 # Bring-up notes
 
 Dated log of what was tried and where each run stopped. Newest first.
+## 2026-11-13 — Render thread: the converted-vertex cache's hits get cheaper (6 threads +4%, 4 threads +2%)
+
+- **Where the time was** (VEMIT_STATS, gate fight, per 2 s of the render thread): cache hits cost ~1780 of
+  ~2700 Mcyc of vertex work: index read ~240, plan ~770 (setup ~200, signatures ~210, distinct-index count
+  ~365), cache lookup ~550 (mostly the content hash that proves a cached range unchanged), emit ~170.
+- **Probe first** (VC_PEEK, default on): when the table already holds exactly this key (signature, range,
+  stride), the entry takes it without counting its distinct indices -- the count only decides whether a new range
+  is dense enough to cache; serving a converted range is cheaper than the stream path whatever the density, and
+  the content check still runs. Distinct count 365 -> ~95 Mcyc. A/B 3 reps: 6 threads 21.13 -> 20.70 ms (vertex
+  time 5.59 -> 5.11 ms), 4 threads 28.51 -> 28.28 ms.
+- **Hash once per sync epoch** (VC_SKIPHASH, default on): 68% of hits (70% of the hashed bytes, ~3.4 GB/s) were
+  ranges already validated in the same batch. The command processor now marks sync points (`rsx_vemit_sync`):
+  jumps, calls, returns, any non-3D subchannel (copies, blits), NV406E reference/semaphores, labels, reports
+  and the driver range. A hit on a range hashed or converted in the same batch and epoch is served without hashing
+  again (cache entries grew to one 64-byte line for the stamp). VCACHE_VERIFY: 2.5M served draws compared, 0
+  differing. Lookup 635 -> 392 Mcyc. A/B 3 reps: 6 threads 20.89 -> 20.45 ms (5.13 -> 4.66 ms), 4 threads
+  28.44 -> 28.14 ms.
+- Tried and dropped: reusing the previous entry's plan when its attribute state is unchanged (54% of entries):
+  signatures 216 -> 148 but the state compare and template copy cost as much as the setup it saved.
+
 ## 2026-11-13 — EG1 skinning 30% cheaper (6 threads +1%); EG3 gated out
 
 - **Skinning** (`if2_eg_skin`): the prepared matrices are kept in a host-order copy (no byte swap per row load),
