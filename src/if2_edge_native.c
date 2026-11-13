@@ -196,7 +196,26 @@ static inline int below(const uint8_t* ls, uint32_t a, int e_xyz, int e_w)
     return _mm_movemask_epi8(_mm_cmplt_epi32(v, lim)) == 0xFFFF;
 }
 
-unsigned long long g_eg_skin_fast_v, g_eg_skin_exact_v, g_eg_norm_fast, g_eg_norm_exact;   /* diagnostics */
+unsigned long long g_eg_skin_fast_v, g_eg_skin_exact_v, g_eg_norm_fast, g_eg_norm_exact, g_eg_skin_t[3];   /* diagnostics */
+
+/* two vertices at once (one per 128-bit half), the same operations lane for lane */
+static inline __m256 nzw(__m256 f) { EG_OPQ(f); return _mm256_add_ps(f, _mm256_setzero_ps()); }
+static inline __m256 FMw(__m256 a, __m256 b) { EG_OPQ(a); return nzw(_mm256_mul_ps(a, b)); }
+static inline __m256 FMAw(__m256 a, __m256 b, __m256 c) { EG_OPQ(a); return nzw(_mm256_fmadd_ps(a, b, c)); }
+static inline __m256 FMSw(__m256 a, __m256 b, __m256 c) { EG_OPQ(a); return nzw(_mm256_fmsub_ps(a, b, c)); }
+#define YZXw(v) _mm256_permute_ps((v), _MM_SHUFFLE(3, 0, 2, 1))
+#define ZXYw(v) _mm256_permute_ps((v), _MM_SHUFFLE(3, 1, 0, 2))
+static inline __m256 ldf2(const uint8_t* ls, uint32_t a0, uint32_t a1) { return _mm256_set_m128(ldf(ls, a1), ldf(ls, a0)); }
+static int skin_v2(void)   /* EG_SKIN_V1=1: the v0.1.29 loops (A/B) */
+{
+    static int v = -1;
+    if (v < 0) { const char* e = getenv("EG_SKIN_V1"); v = !(e && *e == '1'); }
+    return v;
+}
+static inline void stf2(uint8_t* ls, uint32_t a0, uint32_t a1, __m256 v)
+{
+    stf(ls, a0, _mm256_castps256_ps128(v)); stf(ls, a1, _mm256_extractf128_ps(v, 1));
+}
 int if2_eg_skin(uint8_t* ls, uint32_t ectx, uint32_t mats, uint32_t nmat, uint32_t blend)
 {
     const uint8_t* c = ls + (ectx & LSM);
@@ -212,9 +231,11 @@ int if2_eg_skin(uint8_t* ls, uint32_t ectx, uint32_t mats, uint32_t nmat, uint32
     const uint32_t scratch = be32(ls, ectx + 0x10 + 4u * (c[0] & 15u));
     const uint32_t n4 = (nv + 3u) & ~3u, n8 = (nv + 7u) & ~7u;
 
+    EG_T(const unsigned long long K0 = __rdtsc();)
     /* which of the 256 matrix slots an index can name are in range (before the prep moves lanes:
      * the rotation in x y z, the translation in w -- the prep keeps each lane's kind) */
     uint8_t mok[256];   /* 0 out of range, 1 in range, 2 not checked yet (checked on first use) */
+    static __declspec(thread) __m128 nmr[256][3];   /* the prepared matrices, host order */
     memset(mok, 2, sizeof mok);
     for (uint32_t m = 0; m < nmat; m++)
         mok[m] = (uint8_t)(below(ls, mats + 48u * m, 8, 40) && below(ls, mats + 48u * m + 16, 8, 40) &&
@@ -231,7 +252,13 @@ int if2_eg_skin(uint8_t* ls, uint32_t ectx, uint32_t mats, uint32_t nmat, uint32
         const __m128 o2 = _mm_setr_ps(_mm_cvtss_f32(_mm_shuffle_ps(r0, r0, 2)), _mm_cvtss_f32(r1),
                                       _mm_cvtss_f32(_mm_shuffle_ps(r2, r2, 1)), _mm_cvtss_f32(_mm_shuffle_ps(r2, r2, 3)));
         stf(ls, a, o0); stf(ls, a + 16, o1); stf(ls, a + 32, o2);
+        nmr[m][0] = o0; nmr[m][1] = o1; nmr[m][2] = o2;
     }
+    /* a slot the fast loop may take: in the list and in range (an index past the list reads the local store as
+     * it is then, which the per-vertex code below does) */
+    const int v2 = skin_v2();
+    uint8_t mf[256];
+    for (uint32_t m = 0; m < 256; m++) mf[m] = (uint8_t)(m < nmat && mok[m] == 1);
 
     /* 2. per vertex, batch by batch (the rows of a batch go to the scratch table). A vertex whose inputs
      *    are outside the ranges takes the exact helpers (the SPU code's semantics for any value). */
@@ -246,12 +273,99 @@ int if2_eg_skin(uint8_t* ls, uint32_t ectx, uint32_t mats, uint32_t nmat, uint32
     const u128 s_t2 = k4(0x1C1D1E1Fu, 0x04050607u, 0x08090A0Bu, 0x80808080u);
     uint32_t bsize = 4;
     if (n4 > 11u) bsize = (uint32_t)(((uint64_t)n4 * 0xAAAAAAABull) >> 33) & ~3u;
+    EG_T(const unsigned long long K1 = __rdtsc();)
     uint32_t done = 0;
-    while (done < n4) {
+    const uint32_t nbat = (n4 + bsize - 1u) / bsize, lastlen = n4 - bsize * (nbat - 1u);
+    const __m128i lim40 = _mm_set1_epi32((127 + 40) << 23), lim20 = _mm_set1_epi32((127 + 20) << 23);
+    const __m128i absm = _mm_set1_epi32(0x7FFFFFFF);
+    for (uint32_t bi = 0; done < n4; bi++) {
         const uint32_t len = (n4 - done) > bsize ? bsize : (n4 - done);
         for (uint32_t j = 0; j < len; j++) {
             const uint32_t v = done + j;
             const uint8_t* bd = ls + ((blend + 8u * v) & LSM);
+            if (j + 1u < len && v2) {   /* a pair */
+                const uint8_t* bd1 = ls + ((blend + 8u * (v + 1u)) & LSM);
+                if (mf[bd[1]] && mf[bd[3]] && mf[bd[5]] && mf[bd[7]] && mf[bd1[1]] && mf[bd1[3]] && mf[bd1[5]] && mf[bd1[7]]) {
+                    const __m256 p = ldf2(ls, tpos + 16u * v, tpos + 16u * v + 16u), n = ldf2(ls, tnrm + 16u * v, tnrm + 16u * v + 16u);
+                    const __m256 t = ttan ? ldf2(ls, ttan + 16u * v, ttan + 16u * v + 16u) : _mm256_setzero_ps();
+                    const __m256i am = _mm256_set1_epi32(0x7FFFFFFF);
+                    const __m256i bad = _mm256_or_si256(
+                        _mm256_cmpgt_epi32(_mm256_and_si256(_mm256_castps_si256(p), am), _mm256_set1_epi32(((127 + 40) << 23) - 1)),
+                        _mm256_or_si256(_mm256_cmpgt_epi32(_mm256_and_si256(_mm256_castps_si256(n), am), _mm256_set1_epi32(((127 + 20) << 23) - 1)),
+                                        _mm256_cmpgt_epi32(_mm256_and_si256(_mm256_castps_si256(t), am), _mm256_set1_epi32(((127 + 20) << 23) - 1))));
+                    if (_mm256_testz_si256(bad, bad)) {
+                        EG_T(g_eg_skin_fast_v += 2;)
+                        const __m256 wv = FMw(_mm256_cvtepi32_ps(_mm256_setr_epi32(bd[0], bd[2], bd[4], bd[6], bd1[0], bd1[2], bd1[4], bd1[6])),
+                                              _mm256_castsi256_ps(_mm256_set1_epi32(0x3B808080)));
+                        const __m256 w0 = _mm256_permute_ps(wv, 0x00), w1 = _mm256_permute_ps(wv, 0x55),
+                                     w2 = _mm256_permute_ps(wv, 0xAA), w3 = _mm256_permute_ps(wv, 0xFF);
+                        __m256 row[3];
+                        for (uint32_t r = 0; r < 3; r++) {
+                            const __m256 a0 = _mm256_set_m128(nmr[bd1[1]][r], nmr[bd[1]][r]), a1 = _mm256_set_m128(nmr[bd1[3]][r], nmr[bd[3]][r]);
+                            const __m256 a2 = _mm256_set_m128(nmr[bd1[5]][r], nmr[bd[5]][r]), a3 = _mm256_set_m128(nmr[bd1[7]][r], nmr[bd[7]][r]);
+                            row[r] = FMAw(w3, a3, FMAw(w2, a2, FMAw(w1, a1, FMw(w0, a0))));
+                        }
+                        const __m256 one8 = _mm256_set1_ps(1.0f), zero8 = _mm256_setzero_ps();
+                        const __m256 R0 = _mm256_blend_ps(row[0], one8, 0x88), R1 = _mm256_blend_ps(row[1], zero8, 0x88),
+                                     R2 = _mm256_blend_ps(row[2], zero8, 0x88);
+                        const __m256 tw = _mm256_shuffle_ps(row[0], row[1], _MM_SHUFFLE(3, 3, 3, 3));
+                        const __m256 T = _mm256_blend_ps(_mm256_shuffle_ps(tw, row[2], _MM_SHUFFLE(3, 3, 2, 0)), zero8, 0x88);
+                        for (uint32_t q = 0; q < 2; q++) {
+                            const uint32_t jq = j + q;
+                            if (bi + 1u == nbat || (bi + 2u == nbat && jq >= lastlen)) {
+                                const uint32_t sa = scratch + 48u * jq;
+                                const __m128 r0 = q ? _mm256_extractf128_ps(R0, 1) : _mm256_castps256_ps128(R0);
+                                const __m128 r1 = q ? _mm256_extractf128_ps(R1, 1) : _mm256_castps256_ps128(R1);
+                                const __m128 r2 = q ? _mm256_extractf128_ps(R2, 1) : _mm256_castps256_ps128(R2);
+                                stf(ls, sa, r0); stf(ls, sa + 16, r1); stf(ls, sa + 32, r2);
+                            }
+                        }
+                        stf2(ls, tpos + 16u * v, tpos + 16u * v + 16u, FMAw(ZXYw(p), R2, FMAw(YZXw(p), R1, FMAw(p, R0, T))));
+                        const __m256 a2 = YZXw(R2), b2 = ZXYw(R2), c1 = ZXYw(R1), e1 = YZXw(R1), d0 = YZXw(R0), f0 = ZXYw(R0);
+                        const __m256 A = FMSw(a2, b2, FMw(c1, d0));
+                        const __m256 B = FMSw(c1, e1, FMw(a2, f0));
+                        const __m256 C = FMSw(d0, f0, FMw(b2, e1));
+                        stf2(ls, tnrm + 16u * v, tnrm + 16u * v + 16u, FMAw(A, ZXYw(n), FMAw(B, YZXw(n), FMw(C, n))));
+                        if (ttan) stf2(ls, ttan + 16u * v, ttan + 16u * v + 16u, FMAw(ZXYw(t), R2, FMAw(YZXw(t), R1, FMw(t, R0))));
+                        j++;
+                        continue;
+                    }
+                }
+            }
+            if (v2 && mf[bd[1]] && mf[bd[3]] && mf[bd[5]] && mf[bd[7]]) {
+                const __m128 p = ldf(ls, tpos + 16u * v), n = ldf(ls, tnrm + 16u * v);
+                const __m128 t = ttan ? ldf(ls, ttan + 16u * v) : zero;
+                const __m128i bad = _mm_or_si128(_mm_cmpgt_epi32(_mm_and_si128(_mm_castps_si128(p), absm), _mm_sub_epi32(lim40, _mm_set1_epi32(1))),
+                                    _mm_or_si128(_mm_cmpgt_epi32(_mm_and_si128(_mm_castps_si128(n), absm), _mm_sub_epi32(lim20, _mm_set1_epi32(1))),
+                                                 _mm_cmpgt_epi32(_mm_and_si128(_mm_castps_si128(t), absm), _mm_sub_epi32(lim20, _mm_set1_epi32(1)))));
+                if (_mm_testz_si128(bad, bad)) {
+                    EG_T(g_eg_skin_fast_v++;)
+                    const __m128* m0 = nmr[bd[1]]; const __m128* m1 = nmr[bd[3]];
+                    const __m128* m2 = nmr[bd[5]]; const __m128* m3 = nmr[bd[7]];
+                    const __m128 wv = FM(_mm_cvtepi32_ps(_mm_setr_epi32(bd[0], bd[2], bd[4], bd[6])), k255);
+                    const __m128 w0 = _mm_shuffle_ps(wv, wv, 0x00), w1 = _mm_shuffle_ps(wv, wv, 0x55),
+                                 w2 = _mm_shuffle_ps(wv, wv, 0xAA), w3 = _mm_shuffle_ps(wv, wv, 0xFF);
+                    __m128 row[3];
+                    for (uint32_t r = 0; r < 3; r++)
+                        row[r] = FMA(w3, m3[r], FMA(w2, m2[r], FMA(w1, m1[r], FM(w0, m0[r]))));
+                    const __m128 R0 = _mm_blend_ps(row[0], one, 8), R1 = _mm_blend_ps(row[1], zero, 8),
+                                 R2 = _mm_blend_ps(row[2], zero, 8);
+                    const __m128 tw = _mm_shuffle_ps(row[0], row[1], _MM_SHUFFLE(3, 3, 3, 3));
+                    const __m128 T = _mm_blend_ps(_mm_shuffle_ps(tw, row[2], _MM_SHUFFLE(3, 3, 2, 0)), zero, 8);
+                    if (bi + 1u == nbat || (bi + 2u == nbat && j >= lastlen)) {
+                        const uint32_t sa = scratch + 48u * j;
+                        stf(ls, sa, R0); stf(ls, sa + 16, R1); stf(ls, sa + 32, R2);
+                    }
+                    stf(ls, tpos + 16u * v, FMA(ZXY(p), R2, FMA(YZX(p), R1, FMA(p, R0, T))));
+                    const __m128 a2 = YZX(R2), b2 = ZXY(R2), c1 = ZXY(R1), e1 = YZX(R1), d0 = YZX(R0), f0 = ZXY(R0);
+                    const __m128 A = FMS(a2, b2, FM(c1, d0));
+                    const __m128 B = FMS(c1, e1, FM(a2, f0));
+                    const __m128 C = FMS(d0, f0, FM(b2, e1));
+                    stf(ls, tnrm + 16u * v, FMA(A, ZXY(n), FMA(B, YZX(n), FM(C, n))));
+                    if (ttan) stf(ls, ttan + 16u * v, FMA(ZXY(t), R2, FMA(YZX(t), R1, FM(t, R0))));
+                    continue;
+                }
+            }
             const uint32_t i0 = mats + 48u * bd[1], i1 = mats + 48u * bd[3], i2 = mats + 48u * bd[5],
                            i3 = mats + 48u * bd[7];
             const uint32_t sa = scratch + 48u * j;
@@ -329,6 +443,7 @@ int if2_eg_skin(uint8_t* ls, uint32_t ectx, uint32_t mats, uint32_t nmat, uint32
         done += len;
     }
 
+    EG_T(const unsigned long long K2 = __rdtsc();)
     /* 3. normalize the tangent table, then the normal table. A group of 4 with a lane past 2^60, or a
      *    zero-length vector (frsqest(0) is an exponent-255 number: a large value to the SPU, an infinity
      *    to the host), takes the exact helpers. */
@@ -343,6 +458,37 @@ int if2_eg_skin(uint8_t* ls, uint32_t ectx, uint32_t mats, uint32_t nmat, uint32
         if (!tb) continue;
         for (uint32_t v = 0; v < n8; v += 4) {
             const uint32_t a = tb + 16u * v;
+            if (v2 && v + 8u <= n8) {   /* two groups at once; either one out of range: both the way below */
+                __m128 X0 = ldf(ls, a), Y0 = ldf(ls, a + 16), Z0 = ldf(ls, a + 32), W0 = ldf(ls, a + 48);
+                __m128 X1 = ldf(ls, a + 64), Y1 = ldf(ls, a + 80), Z1 = ldf(ls, a + 96), W1 = ldf(ls, a + 112);
+                const __m128 q[8] = { X0, Y0, Z0, W0, X1, Y1, Z1, W1 };
+                const __m128i am = _mm_set1_epi32(0x7FFFFFFF), lim = _mm_set1_epi32(((127 + 60) << 23) - 1);
+                __m128i bad = _mm_setzero_si128();
+                for (int k = 0; k < 8; k++) bad = _mm_or_si128(bad, _mm_cmpgt_epi32(_mm_and_si128(_mm_castps_si128(q[k]), am), lim));
+                if (_mm_testz_si128(bad, bad)) {
+                    _MM_TRANSPOSE4_PS(X0, Y0, Z0, W0);
+                    _MM_TRANSPOSE4_PS(X1, Y1, Z1, W1);
+                    const __m256 X = _mm256_set_m128(X1, X0), Y = _mm256_set_m128(Y1, Y0), Z = _mm256_set_m128(Z1, Z0);
+                    const __m256 l2 = FMAw(Z, Z, FMAw(Y, Y, FMw(X, X)));
+                    const u128 la = spu__u(_mm_castps_si128(_mm256_castps256_ps128(l2))), lb = spu__u(_mm_castps_si128(_mm256_extractf128_ps(l2, 1)));
+                    const __m128 ra = _mm_castsi128_ps(spu__v(spu_fi(la, spu_frsqest(la))));
+                    const __m128 rb = _mm_castsi128_ps(spu__v(spu_fi(lb, spu_frsqest(lb))));
+                    const __m256 rs8 = _mm256_set_m128(rb, ra);
+                    const __m256i e = _mm256_and_si256(_mm256_castps_si256(rs8), _mm256_set1_epi32(0x7F800000));
+                    if (!_mm256_movemask_epi8(_mm256_cmpeq_epi32(e, _mm256_set1_epi32(0x7F800000)))) {
+                        EG_T(g_eg_norm_fast += 2;)
+                        const __m128 rr[2] = { ra, rb };
+                        for (int k = 0; k < 8; k++) {
+                            const __m128 r = rr[k >> 2];
+                            const __m128 sp = k % 4 == 0 ? _mm_shuffle_ps(r, r, 0x00) : k % 4 == 1 ? _mm_shuffle_ps(r, r, 0x55)
+                                            : k % 4 == 2 ? _mm_shuffle_ps(r, r, 0xAA) : _mm_shuffle_ps(r, r, 0xFF);
+                            stf(ls, a + 16u * (uint32_t)k, FM(q[k], _mm_blend_ps(sp, one, 8)));
+                        }
+                        v += 4;
+                        continue;
+                    }
+                }
+            }
             int fast = below(ls, a, 60, 60) && below(ls, a + 16, 60, 60) && below(ls, a + 32, 60, 60) &&
                        below(ls, a + 48, 60, 60);
             __m128 rs = zero;
@@ -377,6 +523,7 @@ int if2_eg_skin(uint8_t* ls, uint32_t ectx, uint32_t mats, uint32_t nmat, uint32
             }
         }
     }
+    EG_T(const unsigned long long K3 = __rdtsc(); g_eg_skin_t[0] += K1 - K0; g_eg_skin_t[1] += K2 - K1; g_eg_skin_t[2] += K3 - K2;)
     st32(ls, ectx + 0x58, mats > blend ? blend : mats);
     return 1;
 }

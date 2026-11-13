@@ -1,6 +1,20 @@
 # Bring-up notes
 
 Dated log of what was tried and where each run stopped. Newest first.
+## 2026-11-13 — EG1 skinning 30% cheaper (6 threads +1%); EG3 gated out
+
+- **Skinning** (`if2_eg_skin`): the prepared matrices are kept in a host-order copy (no byte swap per row load),
+  range checks run on the vectors already loaded, vertices go two at a time in 256-bit registers (one per half),
+  the blended rows go to the scratch table only for the slots no later batch rewrites, and the normalization does
+  two groups at a time. Same operations, same order: offline 80/80 byte-identical, in game EG_VERIFY 1.9M compares,
+  0 mismatches. Harness 33.7k -> 23.5k cycles a call. A/B (gate fight, 3 reps, EG_SKIN_V1=1 = the old loops):
+  6 threads 21.04 -> 20.84 ms, 4 threads unchanged (28.21 / 28.23 ms).
+- **EG3** (the whole Edge job as compute shaders) was gated by measurement and not built: the job is still ~13% of
+  CPU at 4 threads (gate 1 passes: ~75k cycles a segment, skinning the largest stage), but the RSX cull state on
+  the ring's draws is mixed -- back, front, and 12-30% with culling off (mostly the position-only shadow draws) --
+  so dropping Edge's CPU culling, which a GPU path would do, changes what is drawn (gate 2 fails).
+- **Index decompression** (0xC7B8) was made native and bit-exact but showed no gain; not shipped (EG_PLAN 9.3).
+
 ## 2026-11-13 — EG2: the renderer's Edge-ring draws take a lean stream path (4 threads +1.6%, 6 +1.2%)
 
 - **Census** (VEMIT_STATS ring split, gate fight, per 2 s of the renderer thread): draws reading the Edge job's
