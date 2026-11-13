@@ -77,6 +77,11 @@ HOOKS = [
      "ctx->lr = 0x003D2BE8; func_003D270C(ctx);",
      "if2_ugc_offline",
      "UGC: the online step a finished user-made mission starts by itself is taken offline, #21 (src/infamous2_hooks.cpp)"),
+    # ...and its other way into that step (online mode already on, the bl at 0x3D2C88): offline as well.
+    ("func_003D2A04",
+     "ctx->lr = 0x003D2C8C; func_003D270C(ctx);",
+     "if2_ugc_offline2",
+     "UGC: the online step started with the online mode on is taken offline too, #21 (src/infamous2_hooks.cpp)"),
 ]
 
 # Title update 1.04 (tools/eboot_map.py, 1.00 -> 1.04): the same five sites. func_004761F4's frame grew by
@@ -89,6 +94,7 @@ HOOKS_V104 = [
     ("func_004B5BA0", "vm_write64(ctx->gpr[1] + 0x610, ctx->gpr[0]);", HOOKS[4][2], HOOKS[4][3]),
     # the UGC idle state: the online step is state 7 (the bl at 0x401158), offline is state 21
     ("func_00400F6C", "ctx->lr = 0x0040115C; func_00400BB4(ctx);", HOOKS[5][2], HOOKS[5][3]),
+    ("func_00400F6C", "ctx->lr = 0x00401228; func_00400BB4(ctx);", HOOKS[6][2], HOOKS[6][3]),
 ]
 
 
@@ -129,6 +135,11 @@ def hooks_from_resolve(res):
                     it["pl_ugc_callee"]["value"]), HOOKS[5][2], HOOKS[5][3]))
     else:
         off.append(HOOKS[5][2])
+    if ok("pl_ugc_fn", "pl_ugc_call2", "pl_ugc_callee"):
+        out.append((fn("pl_ugc_fn"), "ctx->lr = 0x%08X; func_%08X(ctx);" % (it["pl_ugc_call2"]["value"] + 4,
+                    it["pl_ugc_callee"]["value"]), HOOKS[6][2], HOOKS[6][3]))
+    else:
+        off.append(HOOKS[6][2])
     return out, off
 
 

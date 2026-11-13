@@ -797,8 +797,12 @@ extern "C" int if2_achievements_install(void);   /* src/if2_achievements.cpp: tr
  * server). The manager's idle state starts that step only while its online
  * mode (G+0x8F8) is still undecided (-1); with the mode "offline" (0) it takes
  * its offline state instead, which needs no network and shows nothing.
- * if2_ugc_offline (called by the lifted idle state right before it starts the
- * step: tools/ppu_postlift.py) turns that start into the offline state.
+ * if2_ugc_offline / if2_ugc_offline2 (called by the lifted idle state right
+ * before it starts the step, from either of its two ways in: tools/ppu_postlift.py)
+ * turn that start into the offline state. Every online moment of the game goes
+ * through this step: its only online features are the UGC server's (login,
+ * ratings, playlists, uploads, reports), and a later request to go online
+ * (the scripts' TRY_ENABLE_ONLINE) only puts the mode back to undecided.
  * PS3_NET_ONLINE=1 leaves the game's own choice.
  *
  * The PSN answers below are for the online step when a player starts it from
@@ -810,13 +814,15 @@ extern "C" void if2_ugc_offline(ppu_context* ctx)
     /* r4 = the state the idle state is about to enter: the online step's first state, 7 in the 1.04 EBOOT
      * and 5 in the disc one; their offline states are 21 and 18 */
     static int s_on = -1, s_said;
-    if (s_on < 0) s_on = getenv("PS3_NET_ONLINE") ? 0 : 1;
+    if (s_on < 0) { const char* e = getenv("IF2_UGC_OFFLINE"); s_on = getenv("PS3_NET_ONLINE") || (e && *e == '0') ? 0 : 1; }
     if (!s_on) return;
     const uint32_t to = (uint32_t)ctx->gpr[4] == 7u ? 21u : (uint32_t)ctx->gpr[4] == 5u ? 18u : 0u;
     if (!to) return;
-    if (!s_said++) fprintf(stderr, "[infamous2] UGC: the online step after a user-made mission is skipped (offline; #21)\n");
+    if (s_said++ < 8) fprintf(stderr, "[infamous2] UGC: the game's online step is skipped (offline; #21)\n");
     ctx->gpr[4] = to;
 }
+/* the idle state's other way into the online step (the online mode already on): the same */
+extern "C" void if2_ugc_offline2(ppu_context* ctx) { if2_ugc_offline(ctx); }
 
 extern "C" int32_t cellSysutilQueueGuestCallbackArgs(uint32_t opd, const uint64_t args[8]);   /* libs/system */
 static const uint32_t kNpEulaAlreadyAccepted = 2;   /* SceNpEulaStatus: SCE_NP_EULA_ALREADY_ACCEPTED */

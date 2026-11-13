@@ -128,6 +128,7 @@ ITEMS = [
     # ---- user-made missions offline (tools/ppu_postlift.py, GitHub #21) ----------------------------------------
     F("pl_ugc_fn", 0x003D2A04, 0x00400F6C, ["ugc_offline"], "the UGC manager's per-frame update"),
     C("pl_ugc_call", 0x003D2BE4, 0x00401158, ["ugc_offline"], "its idle state's bl that starts the online step"),
+    C("pl_ugc_call2", 0x003D2C88, 0x00401224, ["ugc_offline"], "the same, with the online mode already on"),
     dict(name="pl_ugc_callee", kind="callee", base="pl_ugc_call", us100=0x003D270C, us104=0x00400BB4,
          gates=["ugc_offline"], desc="the UGC manager's state change"),
 
