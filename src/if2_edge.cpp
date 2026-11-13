@@ -217,6 +217,7 @@ void corpus_write(int stage, const spu_context* before_ctx, const uint8_t* ls_be
 extern "C" int if2_eg_skin(uint8_t* ls, uint32_t ectx, uint32_t mats, uint32_t nmat, uint32_t blend);
 extern "C" int if2_eg_cull(uint8_t* ls, uint32_t ectx, uint32_t flavor, u128* r3);
 extern "C" int if2_eg_decomp(uint8_t* ls, uint32_t ectx, uint32_t cfg, uint32_t ptab);
+extern "C" void rsx_vemit_set_stream_range(uint32_t lo, uint32_t hi);
 int s_native, s_verify_every;
 volatile LONG s_v_calls, s_v_n, s_v_bad, s_v_unsup, s_nat_calls, s_nat_fallback;
 volatile LONG s_vc_calls, s_natc_calls, s_natc_fallback, s_vd_calls, s_natd_calls, s_natd_fallback;
@@ -366,6 +367,11 @@ extern "C" void if2_edge_configure(void)
         const int k = opt_find("native_geometry");
         if (k >= 0) opt_text(k, ov, sizeof ov);
         s_native = !(ov[0] == '0' || !strcmp(ov, "off") || !strcmp(ov, "false"));
+    }
+    {   /* EG2: the Edge job's output ring (RSX local 0x015E0000..0x01D60000) holds per-frame vertex data: its draws
+         * skip the converted-vertex cache (EG2_STREAM=0: off, for A/B) */
+        const char* x = getenv("EG2_STREAM");
+        if (!(x && *x == 0x30)) rsx_vemit_set_stream_range(0x015E0000u, 0x01D60000u);
     }
     s_verify_every = (e = getenv("EG_VERIFY")) ? atoi(e) : 0;
     if (s_native || s_verify_every) {

@@ -1,6 +1,24 @@
 # Bring-up notes
 
 Dated log of what was tried and where each run stopped. Newest first.
+## 2026-11-13 — EG2: the renderer's Edge-ring draws take a lean stream path (4 threads +1.6%, 6 +1.2%)
+
+- **Census** (VEMIT_STATS ring split, gate fight, per 2 s of the renderer thread): draws reading the Edge job's
+  output ring cost ~780 of ~2740 Mcyc of vertex emission. Half are position-only (shadow-type, every attribute
+  in the ring), half mix ring position/normal/tangent with static color and UV streams, so the plan's
+  single-staged-buffer EG2 does not apply as is. Upper bound (EG2_SKIP_RING=1 drops those draws, wrong picture):
+  6 threads 21.65 -> 20.37 ms, 4 threads 29.0 -> 27.3 ms, partly GPU work.
+- **What changed** (toolkit `rsx_vertex_fetch.c`): `rsx_vemit_set_stream_range(lo, hi)` registers a stream-only
+  range of RSX local memory (the title sets the Edge ring, 0x015E0000..0x01D60000). A draw with an attribute in it
+  goes straight to the stream path: no density count, plan signatures or cache probe (ring data never repeats,
+  so the cache always held it back), and its dedupe uses the index itself as the table slot (Edge indices are a
+  compact 0..1023 range: sequential lines, no collisions). Same vertices, same picture.
+- **Measured** (ring draws, Mcyc per 2 s): position-only 284 -> 192, mixed 480 -> 384. A/B (gate fight, 3 reps,
+  EG2_STREAM=0/1): 6 threads 21.37 -> 21.12 ms (vertex time 5.81 -> 5.45 ms), 4 threads 28.53 -> 28.06 ms (6.60 ->
+  6.07 ms).
+- Not done: pre-converting the ring attributes on the SPU threads (would remove part of the remaining ~300 Mcyc of
+  conversion, at the cost of a second vertex stream or a per-vertex merge in the backend).
+
 ## 2026-11-13 — EG1: Edge Geometry vertex decompression as native code, bit-exact (+1.2% / +1.6%)
 
 - **What it is.** The Edge job's vertex decompression (0x4448, 15% of the job), specialized path for the one

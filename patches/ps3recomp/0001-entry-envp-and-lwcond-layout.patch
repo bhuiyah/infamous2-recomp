@@ -69562,7 +69562,7 @@ index 0000000..114f6db
 +
 +#endif /* RSX_UPSCALE_H */
 diff --git a/libs/video/rsx_vertex_fetch.c b/libs/video/rsx_vertex_fetch.c
-index 3e46724..2dbed7a 100644
+index 3e46724..b4a5e9e 100644
 --- a/libs/video/rsx_vertex_fetch.c
 +++ b/libs/video/rsx_vertex_fetch.c
 @@ -6,6 +6,35 @@
@@ -69644,7 +69644,7 @@ index 3e46724..2dbed7a 100644
      default:
          { static int t = -1; if (t < 0) t = getenv("VTX_TYPEDBG") ? 1 : 0;
            if (t) { static u32 seen = 0;
-@@ -107,3 +152,2004 @@ void rsx_fetch_attrib(const rsx_state* st, int idx, u32 vi, float out[4])
+@@ -107,3 +152,2087 @@ void rsx_fetch_attrib(const rsx_state* st, int idx, u32 vi, float out[4])
          break;
      }
  }
@@ -71261,15 +71261,19 @@ index 3e46724..2dbed7a 100644
 + * same ib / newv / counts. The table (64 KB) is mostly out of L1/L2 when an
 + * entry starts, so each index's entry is requested RSX_VE_PFD_IDX ahead. */
 +#define RSX_VE_DD_SLOT(vi) (((u32)(vi) * 2654435761u) >> (32 - RSX_VDEDUPE_BITS))
-+static u32 rsx_ve_dedupe_fast(rsx_vdedupe* d, const u32* vis, u32 n, u32* next_elem, u32* ib, u32* newv, int pf)
++/* direct: the slot is the index itself (mod the table) -- for a stream-range draw, whose indices are a compact
++ * 0..~1023 range: sequential lines, no collisions (any slot function gives the same picture: a collision only
++ * repeats a vertex) */
++static u32 rsx_ve_dedupe_fast(rsx_vdedupe* d, const u32* vis, u32 n, u32* next_elem, u32* ib, u32* newv, int pf, int direct)
 +{
++    const u32 dm = direct ? 1u : 0u;
 +    if (d->gen == 0) rsx_vdedupe_reset(d);
 +    const u64 g64 = (u64)d->gen << 32;
 +    u32 e = *next_elem, nn = 0;
 +#define RSX_VE_DD_STEP(j)                                               \
 +    do {                                                                \
 +        const u32 vi = vis[j];                                          \
-+        rsx_vdedupe_ent* t = &d->t[RSX_VE_DD_SLOT(vi)];                 \
++        rsx_vdedupe_ent* t = &d->t[dm ? (vi & ((1u << RSX_VDEDUPE_BITS) - 1u)) : RSX_VE_DD_SLOT(vi)]; \
 +        const u64 key = (u64)vi | g64;                                  \
 +        u64 cur; memcpy(&cur, t, 8);                                    \
 +        const u32 te = t->e;                                            \
@@ -71283,7 +71287,7 @@ index 3e46724..2dbed7a 100644
 +        e += miss;                                                      \
 +    } while (0)
 +    u32 j = 0;
-+    if (pf && n > RSX_VE_PFD_IDX) {
++    if (pf && !dm && n > RSX_VE_PFD_IDX) {
 +        for (u32 k = 0; k < RSX_VE_PFD_IDX; k++) RSX_VE_PREFETCH(&d->t[RSX_VE_DD_SLOT(vis[k])]);
 +        for (; j < n - RSX_VE_PFD_IDX; j++) {
 +            RSX_VE_PREFETCH(&d->t[RSX_VE_DD_SLOT(vis[j + RSX_VE_PFD_IDX])]);
@@ -71498,7 +71502,26 @@ index 3e46724..2dbed7a 100644
 +
 +/* VEMIT_STATS=1: entries / indices / converted vertices per path, every ~2 s (stderr). */
 +static int rsx_vs_on = -1;
-+static struct { unsigned long long ent[8], idx[8], conv[8], spanmax[8], cyc[8]; unsigned long long t0; int last; unsigned long long sub[5]; } rsx_vs;
++static struct { unsigned long long ent[8], idx[8], conv[8], spanmax[8], cyc[8]; unsigned long long t0; int last; unsigned long long sub[5];
++                unsigned long long rent[3], ridx[3], rcyc[3], rcat[3][8], rmask[4]; u32 rmaskv[4];
++                unsigned long long st_t[5], st_conv; unsigned long long rsub[3][5], rconv[3]; } rsx_vs;
++/* the stream-only range (rsx_vemit_set_stream_range) */
++static u32 s_strm_lo, s_strm_hi;
++/* VEMIT_STATS ring census: a draw is "ring" when an enabled attribute lies in the stream-only range (a title's
++ * per-frame vertex ring): 0 none, 1 every array attribute in it, 2 mixed */
++static int rsx_vs_ringcls(const rsx_state* st, u32 mask, u32* rm)
++{
++    int nr = 0, no = 0;
++    *rm = 0;
++    for (u32 i = 0; i < 16; i++) {
++        if (!(mask >> i & 1u)) continue;
++        const rsx_vertex_attrib* a = &st->vertex_attribs[i];
++        if (!a->enabled || !a->stride) continue;
++        const u32 off = a->offset & 0x7FFFFFFFu;
++        if (!(a->offset & 0x80000000u) && off >= s_strm_lo && off < s_strm_hi) { nr++; *rm |= 1u << i; } else no++;
++    }
++    return nr ? (no ? 2 : 1) : 0;
++}
 +static const char* const rsx_vs_name[8] = { "hit", "cache-conv", "wide", "sparse", "cand-notdense", "nohash", "vcget0", "other" };
 +static void rsx_vs_add(int c, u32 nout, u32 conv, u32 span)
 +{
@@ -71513,8 +71536,29 @@ index 3e46724..2dbed7a 100644
 +            if (rsx_vs.ent[i]) fprintf(stderr, " %s e%llu i%llu c%llu smax%llu Mcyc%llu;", rsx_vs_name[i], rsx_vs.ent[i], rsx_vs.idx[i], rsx_vs.conv[i], rsx_vs.spanmax[i], rsx_vs.cyc[i] / 1000000ull);
 +        fprintf(stderr, " | hit Mcyc: idx %llu plan %llu get %llu emit %llu%c", rsx_vs.sub[0] / 1000000ull,
 +                rsx_vs.sub[1] / 1000000ull, rsx_vs.sub[2] / 1000000ull, rsx_vs.sub[3] / 1000000ull, 10);
++        static const char* const rn[3] = { "noring", "ringonly", "ringmixed" };
++        fprintf(stderr, "[VSTATS-RING]");
++        for (int r = 0; r < 3; r++) {
++            fprintf(stderr, " %s e%llu i%llu Mcyc%llu conv%llu [stream Mcyc idx %llu plan %llu dedupe %llu conv %llu] (", rn[r], rsx_vs.rent[r], rsx_vs.ridx[r], rsx_vs.rcyc[r] / 1000000ull,
++                    rsx_vs.rconv[r], rsx_vs.rsub[r][0] / 1000000ull, rsx_vs.rsub[r][1] / 1000000ull, rsx_vs.rsub[r][2] / 1000000ull, rsx_vs.rsub[r][3] / 1000000ull);
++            for (int i = 0; i < 8; i++) if (rsx_vs.rcat[r][i]) fprintf(stderr, "%s %llu ", rsx_vs_name[i], rsx_vs.rcat[r][i]);
++            fprintf(stderr, ");");
++        }
++        fprintf(stderr, " ring masks:");
++        for (int k = 0; k < 4; k++) if (rsx_vs.rmask[k]) fprintf(stderr, " %04X x%llu", rsx_vs.rmaskv[k], rsx_vs.rmask[k]);
++        fprintf(stderr, "%c", 10);
 +        memset(&rsx_vs, 0, sizeof rsx_vs); rsx_vs.t0 = now;
 +    }
++}
++void rsx_vemit_set_stream_range(u32 lo, u32 hi) { s_strm_lo = lo; s_strm_hi = hi; }
++static int rsx_ve_in_stream(const rsx_state* st, u32 mask)
++{
++    for (u32 m = mask & 0xFFFFu; m; m &= m - 1u) {
++        const rsx_vertex_attrib* a = &st->vertex_attribs[rsx_ve_ctz(m)];
++        const u32 off = a->offset & 0x7FFFFFFFu;
++        if (a->enabled && a->stride && !(a->offset & 0x80000000u) && off >= s_strm_lo && off < s_strm_hi) return 1;
++    }
++    return 0;
 +}
 +static u32 rsx_vemit_run_fast(rsx_vemit* e)
 +{
@@ -71583,8 +71627,10 @@ index 3e46724..2dbed7a 100644
 +    u64 sig0 = 0, sig1 = 0;
 +    int have0 = 0, have1 = 0;
 +    int dense = 0, vs_cat = 7;
-+    if (e->vc && e->vc->nent && (u64)(hi - lo) >= rsx_vc_span_max()) vs_cat = 2;
-+    if (e->vc && e->vc->nent && (u64)(hi - lo) < rsx_vc_span_max()) {
++    const int strm = s_strm_hi && rsx_ve_in_stream(st, e->mask);
++    if (strm) vs_cat = 6;
++    if (!strm && e->vc && e->vc->nent && (u64)(hi - lo) >= rsx_vc_span_max()) vs_cat = 2;
++    if (!strm && e->vc && e->vc->nent && (u64)(hi - lo) < rsx_vc_span_max()) {
 +        const u32 span = hi - lo + 1u;
 +        const int cand = rsx_vc_cand(span, used);
 +        vs_cat = !cand ? 3 : (!plan.hashable || (stride & 15u)) ? 5 : 4;
@@ -71620,17 +71666,24 @@ index 3e46724..2dbed7a 100644
 +        vs_cat = 6;
 +    }
 +
++    const unsigned long long st1 = rsx_vs_on > 0 ? __rdtsc() : 0;
 +    if (!have0) sig0 = rsx_vfetch_plan_sig(&plan, 0);
 +    const u64 sig = sig0 ^ ((u64)stride << 48);
 +    if (sig != *e->dd_sig) { rsx_vdedupe_reset(e->dd); *e->dd_sig = sig; }
 +    const u64 g0 = ((e->half0 + e->vb_used + stride - 1u) / stride) * stride;
 +    if (g0 + (u64)used * stride > e->half0 + e->half_bytes) return 0;
 +    u32 next = (u32)(g0 / stride);
-+    const u32 nn = rsx_ve_dedupe_fast(e->dd, vis, nout, &next, e->ib, newv, pf);
++    const u32 nn = rsx_ve_dedupe_fast(e->dd, vis, nout, &next, e->ib, newv, pf, strm);
 +    if (g0 + (u64)nn * stride > e->half0 + e->half_bytes) { rsx_vdedupe_reset(e->dd); return 0; }
++    const unsigned long long st2 = rsx_vs_on > 0 ? __rdtsc() : 0;
 +    if (nn) {
 +        rsx_ve_convert(&plan, newv, 0, nn, e->arena + g0, stride);
 +        e->vb_used = (u32)(g0 + (u64)nn * stride - e->half0);
++    }
++    if (rsx_vs_on > 0) {   /* stream path: idx, plan(+density/get), sig+dedupe, convert */
++        const unsigned long long st3 = __rdtsc();
++        rsx_vs.st_t[0] += vt1 - rsx_vs.sub[4]; rsx_vs.st_t[1] += st1 - vt1; rsx_vs.st_t[2] += st2 - st1; rsx_vs.st_t[3] += st3 - st2;
++        rsx_vs.st_conv += nn;
 +    }
 +    e->converted = nn;
 +    rsx_vs_add(vs_cat, nout, nn, hi - lo + 1u);
@@ -71639,18 +71692,48 @@ index 3e46724..2dbed7a 100644
 +
 +u32 rsx_vemit_run(rsx_vemit* e)
 +{
++    {   /* EG2_SKIP_RING=1 (diagnostic, wrong picture): draws reading the stream-only range are dropped -- the
++         * upper bound of what taking their vertex work off this thread can give */
++        static int skip = -1;
++        if (skip < 0) { const char* x = getenv("EG2_SKIP_RING"); skip = x && *x == '1'; }
++        if (skip) { u32 rm; if (rsx_vs_ringcls(e->st, e->mask, &rm)) return 0; }
++    }
 +    if (rsx_vs_on > 0 && rsx_ve_fast_on()) {   /* VEMIT_STATS: cycles per path */
 +        rsx_vs.last = 7;
 +        const unsigned long long a = __rdtsc();
 +        rsx_vs.sub[4] = a;
 +        const u32 n = rsx_vemit_run_fast(e);
-+        rsx_vs.cyc[rsx_vs.last] += __rdtsc() - a;
++        const unsigned long long d = __rdtsc() - a;
++        rsx_vs.cyc[rsx_vs.last] += d;
++        u32 rm;
++        const int rc = rsx_vs_ringcls(e->st, e->mask, &rm);
++        {   static int left = -1;
++            if (left < 0) { const char* x = getenv("VEMIT_RINGDUMP"); left = x ? atoi(x) : 0; }
++            if (rc == 2 && left > 0) {
++                left--;
++                fprintf(stderr, "[RINGDUMP] mask %04X stride %u prim %u count %u:", e->mask, e->stride, e->prim, e->count);
++                for (u32 i = 0; i < 16; i++) if (e->mask >> i & 1u) {
++                    const rsx_vertex_attrib* va = &e->st->vertex_attribs[i];
++                    fprintf(stderr, " a%u(en%d t%u n%u s%u f%u off%08X)", i, va->enabled, va->type, va->size, va->stride, va->frequency, va->offset);
++                }
++                fprintf(stderr, "%c", 10);
++            }
++        }
++        rsx_vs.rent[rc]++; rsx_vs.ridx[rc] += n; rsx_vs.rcyc[rc] += d; rsx_vs.rcat[rc][rsx_vs.last]++;
++        for (int k = 0; k < 4; k++) rsx_vs.rsub[rc][k] += rsx_vs.st_t[k];
++        rsx_vs.rconv[rc] += rsx_vs.st_conv;
++        memset(rsx_vs.st_t, 0, sizeof rsx_vs.st_t); rsx_vs.st_conv = 0;
++        if (rc) {   /* the attribute sets that come from the ring (4 most common, first come) */
++            int k = 0;
++            while (k < 4 && rsx_vs.rmask[k] && rsx_vs.rmaskv[k] != (rm | (rc == 2 ? 0x10000u : 0u))) k++;
++            if (k < 4) { rsx_vs.rmaskv[k] = rm | (rc == 2 ? 0x10000u : 0u); rsx_vs.rmask[k]++; }
++        }
 +        return n;
 +    }
 +    return rsx_ve_fast_on() ? rsx_vemit_run_fast(e) : rsx_vemit_run_ref(e);
 +}
 diff --git a/libs/video/rsx_vertex_fetch.h b/libs/video/rsx_vertex_fetch.h
-index a52a2e1..280aedd 100644
+index a52a2e1..b878256 100644
 --- a/libs/video/rsx_vertex_fetch.h
 +++ b/libs/video/rsx_vertex_fetch.h
 @@ -32,6 +32,7 @@
@@ -71661,7 +71744,7 @@ index a52a2e1..280aedd 100644
  
  #ifdef __cplusplus
  extern "C" {
-@@ -68,6 +69,356 @@ float rsx_rd_half_be(const u8* p);  /* 2-byte IEEE half -> float  */
+@@ -68,6 +69,361 @@ float rsx_rd_half_be(const u8* p);  /* 2-byte IEEE half -> float  */
   */
  void rsx_fetch_attrib(const rsx_state* st, int idx, u32 vi, float out[4]);
  
@@ -72006,6 +72089,11 @@ index a52a2e1..280aedd 100644
 + * Every output (ib, arena bytes, vb_used, dedupe table, cache state) is
 + * bit-identical to the reference; the test vb4.c checks that differentially. */
 +u32 rsx_vemit_run(rsx_vemit* e);
++/* A stream-only range of RSX local memory [lo, hi) (offsets): vertex data there is written fresh for every
++ * draw (a title's per-frame vertex ring), so a draw with an attribute in it skips the converted-vertex
++ * cache (the density count, signatures and probe a ring draw would only waste) and takes the stream path.
++ * 0, 0 = none (the default). */
++void rsx_vemit_set_stream_range(u32 lo, u32 hi);
 +
 +/* Prefetch hint for an entry about to be emitted: the index span (indexed) or
 + * the head of each enabled attribute array from `first` (non-indexed). Call
