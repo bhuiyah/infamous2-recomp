@@ -515,6 +515,8 @@ extern "C" void ps3_host_placement_configure(int mode);
  * to the SPURS kernel as on a PS3 and the WWS jobs run on all five SPUs.
  * SPU_TASKSET_LLE=0 is the kill switch (the HLE park). */
 extern "C" void spu_taskset_lle_configure(int on);
+/* GL1 (src/if2_glight.cpp): the SPU lighting job on the GPU (GLIGHT, GLIGHT_VERIFY). */
+extern "C" void if2_glight_configure(void);
 
 static DWORD WINAPI frame_clock(LPVOID)
 {
@@ -1125,6 +1127,7 @@ int main(int argc, char** argv)
         ps3_host_placement_configure(strcmp(pv, "off") ? -1 : 0);
     }
     spu_taskset_lle_configure(1);   /* before the first SPU thread */
+    if2_glight_configure();         /* before the first SPU thread and the device */
     s_clock_thread = CreateThread(NULL, 4u * 1024 * 1024, frame_clock, NULL, 0, NULL);
     if (getenv("HOST_SAMPLE")) CreateThread(NULL, 0, host_sampler, NULL, 0, NULL);
 
