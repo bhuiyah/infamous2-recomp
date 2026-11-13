@@ -1,6 +1,35 @@
 # Bring-up notes
 
 Dated log of what was tried and where each run stopped. Newest first.
+## 2026-11-13 — EG1: Edge Geometry skinning as native code, bit-exact (4 threads +4.5%)
+
+- **What the job is.** SPU job module d0d15ec83992 (image 222, 22% of the SPU threads' samples, the largest) is
+  Sony's Edge Geometry library in Sucker Punch's batch wrapper: ~940 mesh segments a frame (decompress, skin,
+  cull, compress into a ring in RSX local memory, fill the command-buffer holes job 225 left). Measured stage
+  split: skinning 36%, triangle culling 26%, vertex decompression 15%, index decompression 7%. Doubling the job's
+  cost (EG_SPIN=100) costs 19% fps on 4 threads and 11% on 6: worth making cheaper.
+- **Hook (toolkit).** Lifted `brsl` calls are direct C calls, so spu_registry_replace cannot reach them.
+  spu_lifter.py --indirect-calls <addr,...> emits the listed calls through the dispatcher (as a `bisl`);
+  lift_jobmods.py takes them per module from SPU_JOBMOD_INDIRECT_CALLS, which tools/lift_jobs.sh sets for the Edge
+  module's stage entries. Only those 10 call sites change.
+- **Native skinning (src/if2_edge_native.c, 0xD0A8).** Flavor 3 (4 influences, non-uniform scaling), matrix format
+  0: the matrices rearranged in place into a diagonal layout, per vertex the 4 weights (byte * 0x3B808080, the
+  job's own 1/255) blend 3 rows (fm + 3 fma), position by the translation-seeded fma chain, normal by the
+  cofactor of the blended rows, tangent by the rotation; then normal and tangent tables normalized with the SPU's
+  fi(frsqest). Same operations in the same order with the RZ/DAZ/FTZ mode the SPU threads run in; the blended rows
+  go to the same scratch table in the same batches. Inputs are range-checked per vertex (and per normalization
+  group); anything outside (and zero-length vectors, whose frsqest is an exponent-255 value) uses the toolkit's
+  exact SPU float helpers. Unsupported layouts run the SPU code.
+- **Verification.** Offline: 80 recorded calls (local store before/after, two save states), byte-identical outside
+  the stack frame (analysis/edgegeom/harness, private). In game: EG_VERIFY=<n> runs native code on a copy and the
+  SPU code on the real local store and compares: 543k calls, 0 mismatches.
+- **Gain** (gate fight, 2 reps): 4 threads 31.3 -> 32.8 fps (interval 32.3 -> 30.9 ms); 6 threads unchanged
+  within noise (the walker limits there). Option row Frame > CPU > Native geometry processing (default On,
+  EG_NATIVE=0/1).
+- Diagnostics: EG_DUMP, EG_CENSUS (per config and stage cycles), EG_SPIN, EG_CORPUS (recording), EG_VERIFY.
+- Tried and dropped: converting dense never-cached vertex ranges straight into the stream (VC_DENSE_STREAM): the
+  walker's cost on those draws is the conversion itself, not the per-index dedupe (32 cycles an index either way).
+
 ## 2026-11-12 — LE1: lower-end CPUs: G-buffer copies stay on the GPU, Auto pacing never below 30, sparse meshes cached (6 threads 39 -> 44 fps at the gate)
 
 - **G-buffer capture on the GPU (default on; GLIGHT_GBUF_GPU=0 = the readback path).** The title copies each G-buffer surface to main memory for the lighting job as two NV3089 blits (1024 + 256 columns), so the whole-surface capture of GL1 never matched. The capture now takes any 1:1 rectangle of a colour or zeta surface into its place in the lighting input (box copy, RowPitch = the plane's pitch), and a plane is current once its columns add up to the width. The 4.6 ms readback and 1.7 ms of GPU waits a frame are gone at 6 threads (39 -> 43 fps); the picture matches GLIGHT_VERIFY.

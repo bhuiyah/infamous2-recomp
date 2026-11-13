@@ -211,6 +211,8 @@ add_executable(${PROJECT_NAME}
     src/if2_ss_title.cpp
     src/if2_png.cpp
     src/if2_glight.cpp
+    src/if2_edge.cpp
+    src/if2_edge_native.c
     src/if2_achievements.cpp
     ${PS3RECOMP_SCAFFOLD}
     ${HLE_NID_TABLE}
@@ -273,6 +275,12 @@ if(SPU_SOURCES)
     endif()
     ps3recomp_apply_spu_isa(${SPU_SOURCES})
 endif()
+# EG1 (src/if2_edge_native.c): native stages of the Edge Geometry job, computing what the lifted SPU code
+# computes -- so built like it: its include directory, flags and the SPU float helpers' host mode.
+set_source_files_properties(src/if2_edge_native.c PROPERTIES
+    INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/spu"
+    COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/O2,-O2>")
+ps3recomp_apply_spu_isa(src/if2_edge_native.c)
 
 # app.rc carries the icon, the version block and the manifest, and needs a
 # resource compiler. Listing it as a source on a host that has none is not a
