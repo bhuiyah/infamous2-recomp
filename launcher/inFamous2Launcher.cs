@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.25";
+        public const string Version = "0.1.26";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -619,6 +619,32 @@ namespace Infamous2Launcher
             else if (File.Exists(vswhere)) vs.Note = "Visual Studio is installed without the C++ tools: open Visual Studio Installer, Modify, and add \"Desktop development with C++\".";
             list.Add(vs);
 
+            // The Windows SDK the build uses (vcvars picks the newest installed). Its d3d12.h must declare the C
+            // binding of Get{CPU,GPU}DescriptorHandleForHeapStart with the RetVal out-parameter; 10.0.19041 and
+            // older still have the one-argument form, and the renderer fails to compile ("too many arguments to
+            // function call, expected 1, have 2", issue #18).
+            var sdk = new Prereq
+            {
+                Id = "sdk", Name = "Windows SDK 10.0.20348 or newer", Why = "the Direct3D 12 headers", WingetId = "Microsoft.WindowsSDK.10.0.26100",
+                Url = "https://developer.microsoft.com/windows/downloads/windows-sdk/"
+            };
+            string sdkVer, sdkD3d = NewestSdkD3d12(out sdkVer);
+            if (sdkD3d == null) { sdk.Ok = true; sdk.Found = "(not found separately: Visual Studio's)"; }
+            else
+            {
+                string h = "";
+                try { h = File.ReadAllText(sdkD3d); } catch { }
+                bool retval = h.Length == 0 || Regex.IsMatch(h, @"GetCPUDescriptorHandleForHeapStart\s*\)\s*\(\s*ID3D12DescriptorHeap\s*\*\s*This\s*,\s*D3D12_CPU_DESCRIPTOR_HANDLE\s*\*\s*RetVal");
+                sdk.Found = Path.GetDirectoryName(Path.GetDirectoryName(sdkD3d)) + " (" + sdkVer + ")";
+                if (retval) sdk.Ok = true;
+                else
+                {
+                    sdk.Outdated = true;
+                    sdk.Note = "found Windows SDK " + sdkVer + "; its Direct3D 12 header is too old for the game's renderer (10.0.20348 or newer is needed)";
+                }
+            }
+            list.Add(sdk);
+
             // CMake and Ninja: on PATH, in their usual folders, or the copies Visual Studio's C++ CMake tools bring.
             var cm = new Prereq { Id = "cmake", Name = "CMake 3.20 or newer", Why = "configures the build", WingetId = "Kitware.CMake", Url = "https://cmake.org/download/" };
             cm.Found = Util.FindOnPath("cmake.exe", path);
@@ -699,6 +725,36 @@ namespace Infamous2Launcher
         }
 
         public const int MinClangMajor = 19;
+
+        // um\d3d12.h of the newest Windows 10/11 SDK installed (the one vcvars picks), or null.
+        static string NewestSdkD3d12(out string version)
+        {
+            version = null;
+            var roots = new List<string>();
+            try
+            {
+                using (var k = Microsoft.Win32.RegistryKey.OpenBaseKey(Microsoft.Win32.RegistryHive.LocalMachine, Microsoft.Win32.RegistryView.Registry32)
+                                   .OpenSubKey(@"SOFTWARE\Microsoft\Windows Kits\Installed Roots"))
+                { var r = k != null ? k.GetValue("KitsRoot10") as string : null; if (!string.IsNullOrEmpty(r)) roots.Add(r); }
+            }
+            catch { }
+            roots.Add(Path.Combine(Util.Pf86, @"Windows Kits\10"));
+            Version best = null; string bestPath = null;
+            foreach (var root in roots)
+            {
+                string inc = Path.Combine(root, "Include");
+                if (!Directory.Exists(inc)) continue;
+                foreach (var d in Directory.GetDirectories(inc))
+                {
+                    Version v;
+                    string f = Path.Combine(d, @"um\d3d12.h");
+                    if (!Version.TryParse(Path.GetFileName(d), out v) || !File.Exists(f)) continue;
+                    if (best == null || v > best) { best = v; bestPath = f; }
+                }
+            }
+            if (best != null) version = best.ToString();
+            return bestPath;
+        }
 
         // "clang version 18.1.8 (...)" -> 18.1.8; null when it cannot be read (then it is not held against it).
         public static Version ClangVersion(string clangCl)
