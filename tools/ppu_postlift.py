@@ -70,6 +70,13 @@ HOOKS = [
      "vm_write64(ctx->gpr[1] + 0x600, ctx->gpr[0]);",
      "if2_physfb_side_a",
      "physics: side A of a PPU mesh contact must be the spilled argument, IF2_PHYSFB=1 (src/infamous2_hooks.cpp)"),
+    # The user-made-mission (UGC) manager's idle state (its online mode, G+0x8F8, still -1), right before it
+    # starts the online step by itself (state 5, the bl at 0x3D2BE4): GitHub #21, the step is taken offline
+    # (state 18) with no connection and no message.
+    ("func_003D2A04",
+     "ctx->lr = 0x003D2BE8; func_003D270C(ctx);",
+     "if2_ugc_offline",
+     "UGC: the online step a finished user-made mission starts by itself is taken offline, #21 (src/infamous2_hooks.cpp)"),
 ]
 
 # Title update 1.04 (tools/eboot_map.py, 1.00 -> 1.04): the same five sites. func_004761F4's frame grew by
@@ -80,6 +87,8 @@ HOOKS_V104 = [
     ("func_004B90AC", "ctx->lr = 0x004B972C; func_004BCE44(ctx);", HOOKS[2][2], HOOKS[2][3]),
     ("func_004B90AC", HOOKS[3][1], HOOKS[3][2], HOOKS[3][3]),
     ("func_004B5BA0", "vm_write64(ctx->gpr[1] + 0x610, ctx->gpr[0]);", HOOKS[4][2], HOOKS[4][3]),
+    # the UGC idle state: the online step is state 7 (the bl at 0x401158), offline is state 21
+    ("func_00400F6C", "ctx->lr = 0x0040115C; func_00400BB4(ctx);", HOOKS[5][2], HOOKS[5][3]),
 ]
 
 
@@ -115,6 +124,11 @@ def hooks_from_resolve(res):
                     HOOKS[4][2], HOOKS[4][3]))
     else:
         off.append(HOOKS[4][2])
+    if ok("pl_ugc_fn", "pl_ugc_call", "pl_ugc_callee"):
+        out.append((fn("pl_ugc_fn"), "ctx->lr = 0x%08X; func_%08X(ctx);" % (it["pl_ugc_call"]["value"] + 4,
+                    it["pl_ugc_callee"]["value"]), HOOKS[5][2], HOOKS[5][3]))
+    else:
+        off.append(HOOKS[5][2])
     return out, off
 
 

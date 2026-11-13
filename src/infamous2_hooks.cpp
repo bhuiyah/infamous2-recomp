@@ -786,9 +786,78 @@ extern "C" int if2_waitev_install(void);  /* src/if2_waitev.cpp: WAIT_EVENTS pol
 extern "C" int if2_menu_install(void);    /* src/if2_menu.cpp: native entries in the game's menus (NATIVE_MENU) */
 extern "C" int if2_achievements_install(void);   /* src/if2_achievements.cpp: trophies -> RecompLauncher */
 
+/* ---------------------------------------------------------------------------
+ * The online step after a user-made mission, without a connection (GitHub #21).
+ *
+ * After a user-made (UGC) mission the game's UGC manager starts an online step
+ * by itself: the network start dialog, two PSN account flags, the PSN terms
+ * check, then HTTP to the UGC server -- which no longer exists. Before this
+ * the flags and the terms check were not implemented and "Please wait..."
+ * stayed up forever; answered, the step ends in "Communication error" (the
+ * server). The manager's idle state starts that step only while its online
+ * mode (G+0x8F8) is still undecided (-1); with the mode "offline" (0) it takes
+ * its offline state instead, which needs no network and shows nothing.
+ * if2_ugc_offline (called by the lifted idle state right before it starts the
+ * step: tools/ppu_postlift.py) turns that start into the offline state.
+ * PS3_NET_ONLINE=1 leaves the game's own choice.
+ *
+ * The PSN answers below are for the online step when a player starts it from
+ * a menu: an unrestricted account that has accepted the terms, so it reaches
+ * the server question instead of waiting forever.
+ * -----------------------------------------------------------------------*/
+extern "C" void if2_ugc_offline(ppu_context* ctx)
+{
+    /* r4 = the state the idle state is about to enter: the online step's first state, 7 in the 1.04 EBOOT
+     * and 5 in the disc one; their offline states are 21 and 18 */
+    static int s_on = -1, s_said;
+    if (s_on < 0) s_on = getenv("PS3_NET_ONLINE") ? 0 : 1;
+    if (!s_on) return;
+    const uint32_t to = (uint32_t)ctx->gpr[4] == 7u ? 21u : (uint32_t)ctx->gpr[4] == 5u ? 18u : 0u;
+    if (!to) return;
+    if (!s_said++) fprintf(stderr, "[infamous2] UGC: the online step after a user-made mission is skipped (offline; #21)\n");
+    ctx->gpr[4] = to;
+}
+
+extern "C" int32_t cellSysutilQueueGuestCallbackArgs(uint32_t opd, const uint64_t args[8]);   /* libs/system */
+static const uint32_t kNpEulaAlreadyAccepted = 2;   /* SceNpEulaStatus: SCE_NP_EULA_ALREADY_ACCEPTED */
+
+/* sceNpManagerGetContentRatingFlag(s32* isRestricted, s32* age) */
+static void if2_NpContentRatingFlag(ppu_context* ctx)
+{
+    const uint32_t restricted = (uint32_t)ctx->gpr[3], age = (uint32_t)ctx->gpr[4];
+    if (restricted) vm_write32(restricted, 0);
+    if (age) vm_write32(age, 18);
+    ctx->gpr[3] = 0;
+}
+/* sceNpManagerGetChatRestrictionFlag(s32* isRestricted) */
+static void if2_NpChatRestrictionFlag(ppu_context* ctx)
+{
+    const uint32_t restricted = (uint32_t)ctx->gpr[3];
+    if (restricted) vm_write32(restricted, 0);
+    ctx->gpr[3] = 0;
+}
+/* sceNpEulaCheckEulaStatus(commId, arg2, arg3, callback, cbArg): callback(status, errorCode, cbArg) */
+static void if2_NpEulaCheckEulaStatus(ppu_context* ctx)
+{
+    const uint32_t cb = (uint32_t)ctx->gpr[6], arg = (uint32_t)ctx->gpr[7];
+    const uint64_t args[8] = { kNpEulaAlreadyAccepted, 0, arg, 0, 0, 0, 0, 0 };
+    if (cb) cellSysutilQueueGuestCallbackArgs(cb, args);
+    fprintf(stderr, "[infamous2] PSN terms check: already accepted (no connection needed; #21)\n");
+    ctx->gpr[3] = 0;
+}
+
+static int if2_psn_bypass_install(void)
+{
+    IF2_OVERRIDE("sceNpManagerGetContentRatingFlag", if2_NpContentRatingFlag);
+    IF2_OVERRIDE("sceNpManagerGetChatRestrictionFlag", if2_NpChatRestrictionFlag);
+    IF2_OVERRIDE("sceNpEulaCheckEulaStatus", if2_NpEulaCheckEulaStatus);
+    return 3;
+}
+
 extern "C" void infamous2_install_overrides(void)
 {
     int n = 0;
+    n += if2_psn_bypass_install();   /* #21: the PSN checks after a UGC mission pass offline */
     /* What this build was made from (tools/if2_resolve.py), and what is off because it was not found */
     fprintf(stderr, "[if2] EBOOT %s (SHA-1 %.12s..., title %s, %s)%s%s\n", IF2_EBOOT_NAME, IF2_EBOOT_SHA1,
             IF2_TITLE_ID, IF2_EBOOT_KNOWN ? "every title address cross-checked" : "title addresses found by pattern: BETA",

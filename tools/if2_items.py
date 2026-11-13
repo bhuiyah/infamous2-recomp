@@ -42,6 +42,7 @@ FEATURES = {
     "menu_trace": "MENU_TRACE diagnostics (a missing native is just not traced)",
     "language_edition": "Language edition: Europe on the US edition (the language-list table)",
     "physfb":     "IF2_PHYSFB physics diagnostics (post-lift hooks)",
+    "ugc_offline": "user-made missions: the online step after one is skipped offline (post-lift hook, #21)",
     "wws_pm":     "the game's Wws_Job SPURS policy module, lifted (else interpreted: slower)",
 }
 
@@ -123,6 +124,12 @@ ITEMS = [
          gates=["physfb"], desc="the PPU narrowphase fallback"),
     F("pl_mesh_fn", 0x004761F4, 0x004B5BA0, ["physfb"], "the mesh contact generator's body"),
     C("pl_mesh_lrsave", 0x00476200, 0x004B5BAC, ["physfb"], "its LR save (std r0, frame(r1))"),
+
+    # ---- user-made missions offline (tools/ppu_postlift.py, GitHub #21) ----------------------------------------
+    F("pl_ugc_fn", 0x003D2A04, 0x00400F6C, ["ugc_offline"], "the UGC manager's per-frame update"),
+    C("pl_ugc_call", 0x003D2BE4, 0x00401158, ["ugc_offline"], "its idle state's bl that starts the online step"),
+    dict(name="pl_ugc_callee", kind="callee", base="pl_ugc_call", us100=0x003D270C, us104=0x00400BB4,
+         gates=["ugc_offline"], desc="the UGC manager's state change"),
 
     # ---- language edition (src/infamous2_hooks.cpp) -----------------------------------------------------------
     D("lang_lists", 0x008D09D0, 0x00930A00, ["language_edition"], "{count, list} per edition (the US one first)"),
