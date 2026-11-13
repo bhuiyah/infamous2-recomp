@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.37";
+        public const string Version = "0.1.38";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -296,6 +296,22 @@ namespace Infamous2Launcher
         {
             return Path.Combine(game, @"hdd0\game\" + titleId + "_INSTALL");
         }
+        // The US update 1.04 folder holds the data of every update before it too (USRDIR\patch\psarc: patch1, patch3,
+        // patch4 and the language texts). The 1.04 package alone brings only patch4 and the EBOOT; with the others
+        // missing the 1.04 game never gets past the first loading screen (issue #23). US edition only: the other
+        // editions' update folders were not checked.
+        public static readonly string[] UsUpdateParts = { "patch1.psarc_s", "patch3.psarc_s", "patch4.psarc_s", "english_text.psarc" };
+        public static List<string> MissingUpdateParts(string updateDir)
+        {
+            var m = new List<string>();
+            string d = Path.Combine(updateDir, @"USRDIR\patch\psarc");
+            foreach (var n in UsUpdateParts) if (!File.Exists(Path.Combine(d, n))) m.Add(n);
+            return m;
+        }
+        public const string IncompleteUpdateHelp =
+            "the update folder holds only part of the updates' data. The 1.04 package alone brings only patch4 and the EBOOT: " +
+            "install EVERY update package in order (1.01, 1.02, 1.03, 1.04 -- in RPCS3: File > Install Packages/Raps/Edats, " +
+            "select them all), then choose that update folder again.";
         public static bool InstallEncrypted(string installDir)
         {
             return IsPsar(Path.Combine(installDir, @"USRDIR\cache\psarc\install1\infamous1.psarc_s")) == false ||
@@ -489,6 +505,14 @@ namespace Infamous2Launcher
                         string v; s.TryGetValue("APP_VER", out v);
                         if (v == "01.04") f.Add(new Finding(0, "Update: APP_VER 01.04."));
                         else f.Add(new Finding(2, "Update: APP_VER " + v + " -- the port needs update 1.04 (install every update up to 1.04)."));
+                        string tid; s.TryGetValue("TITLE_ID", out tid);
+                        if (tid == "BCUS98125")
+                        {
+                            var miss = Ps3Files.MissingUpdateParts(update);
+                            if (miss.Count == 0) f.Add(new Finding(0, "Update data: patch1, patch3, patch4 and the language texts are there."));
+                            else f.Add(new Finding(2, "Update data incomplete (missing " + string.Join(", ", miss.ToArray()) + "): " +
+                                                       Ps3Files.IncompleteUpdateHelp));
+                        }
                     }
                     catch (Exception e) { f.Add(new Finding(2, "Update: PARAM.SFO unreadable (" + e.Message + ").")); }
                     if (!Directory.Exists(Path.Combine(update, "USRDIR"))) f.Add(new Finding(2, "Update folder has no USRDIR."));
@@ -3036,6 +3060,9 @@ namespace Infamous2Launcher
                 var u = Ps3Files.ParseSfo(Path.Combine(gf.UpdateDir, "PARAM.SFO"));
                 string v;
                 L("update PARAM.SFO: APP_VER " + (u.TryGetValue("APP_VER", out v) ? v : "?"));
+                var miss = Ps3Files.MissingUpdateParts(gf.UpdateDir);
+                L("update data (USRDIR\\patch\\psarc): " + (miss.Count == 0 ? "patch1, patch3, patch4, english_text: ok" :
+                  "MISSING " + string.Join(", ", miss.ToArray()) + " -- install every update 1.01-1.04 (issue #23)"));
             }
             catch { L("update PARAM.SFO: none in game\\hdd0\\game\\" + gf.TitleId); }
             try

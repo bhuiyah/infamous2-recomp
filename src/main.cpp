@@ -985,6 +985,54 @@ static void install_repair(const char* disc_usr)
                 why, (unsigned long)GetLastError(), s_install_dir);
 }
 
+/* The US update 1.04 folder must also hold the earlier updates' data (USRDIR\patch\psarc: patch1, patch3, patch4,
+ * english_text). The 1.04 package alone brings only patch4 and the EBOOT; with the rest missing the 1.04 game
+ * never gets past the first loading screen -- a black screen with the pulsing logo (issue #23). Said in the log
+ * and on screen at every start, until the player installs every update. US edition only (the other editions'
+ * update folders were not checked). */
+static char s_update_missing[160];
+static DWORD WINAPI update_incomplete_notice_thread(LPVOID)
+{
+    for (int i = 0; i < 600; i++) {                            /* the game window (see first_install_notice_thread) */
+        HWND w = FindWindowA("ps3recomp_d3d12", NULL);
+        DWORD pid = 0;
+        if (w) GetWindowThreadProcessId(w, &pid);
+        if (w && pid == GetCurrentProcessId()) break;
+        Sleep(100);
+    }
+    Sleep(1000);
+    char msg[256];
+    snprintf(msg, sizeof msg, "Game update incomplete (%s missing): install every update 1.01-1.04 in order.", s_update_missing);
+    for (int t = 0; t < 10; t++) { ovl_notice(msg, 22000); Sleep(20000); }   /* about 3 minutes */
+    return 0;
+}
+static void update_parts_check(void)
+{
+    if (strcmp(IF2_TITLE_ID, "BCUS98125") != 0) return;
+    const char* hdd0 = getenv("PS3_HDD0_ROOT");
+    char base[MAX_PATH * 2];
+    if (hdd0 && *hdd0) snprintf(base, sizeof base, "%s", hdd0);
+    else if (!GetFullPathNameA("game\\hdd0", sizeof base, base, NULL)) return;
+    char usr[MAX_PATH * 2];
+    snprintf(usr, sizeof usr, "%s\\game\\%s\\USRDIR", base, IF2_TITLE_ID);
+    for (char* c = usr; *c; c++) if (*c == '/') *c = '\\';
+    if (GetFileAttributesA(usr) == INVALID_FILE_ATTRIBUTES) return;   /* no update installed (a disc-EBOOT build) */
+    static const char* const k_parts[] = { "patch1.psarc_s", "patch3.psarc_s", "patch4.psarc_s", "english_text.psarc" };
+    for (const char* part : k_parts) {
+        char p[MAX_PATH * 2];
+        snprintf(p, sizeof p, "%s\\patch\\psarc\\%s", usr, part);
+        if (GetFileAttributesA(p) != INVALID_FILE_ATTRIBUTES) continue;
+        const size_t n = strlen(s_update_missing);
+        snprintf(s_update_missing + n, sizeof s_update_missing - n, "%s%s", n ? ", " : "", part);
+    }
+    if (!s_update_missing[0]) return;
+    fprintf(stderr, "[update] the title update is incomplete: %s\\patch\\psarc lacks %s -- the 1.04 package alone has only "
+                    "patch4; install every update (1.01, 1.02, 1.03, 1.04) in order. Without them the game stays on the "
+                    "first loading screen (issue #23)\n", usr, s_update_missing);
+    HANDLE h = CreateThread(NULL, 0, update_incomplete_notice_thread, NULL, 0, NULL);
+    if (h) CloseHandle(h);
+}
+
 static void first_install_notice(void)
 {
     const char* hdd0 = getenv("PS3_HDD0_ROOT");
@@ -1036,6 +1084,7 @@ int main(int argc, char** argv)
     setvbuf(stdout, NULL, _IONBF, 0);   /* unbuffered: do not lose prints on a kill */
     overlay_host_for_hooks();           /* before the overlay first shows (it reads OVL_HOST then) */
     first_install_notice();             /* first start: say the dark screen is the HDD install */
+    update_parts_check();               /* #23: an update folder with only the 1.04 package's data */
 #endif
     /* Save states: armed by default (SAVESTATES=0 turns them off: no slicing,
      * no thread roots, every request refused); SS_CENSUS and SS_SAVE_AT add
