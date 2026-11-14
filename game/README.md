@@ -21,7 +21,7 @@ changed. "Choose..." / "Change..." in the launcher points it at other files late
 one in the update folder's `USRDIR`, not the disc's: the US update's EBOOT is 10,605,256 bytes, its disc
 EBOOT 10,159,776, and step 2 (check) says when an EBOOT's code looks like a disc build. The build finds the
 game's addresses in your EBOOT by pattern and logs what it found; after building (and after playing, if
-something goes wrong) press **Save report** in the launcher and attach `logs\eu-report-<date>.txt` to
+something goes wrong) press **Report a problem** in the launcher and attach `logs\eu-report-<date>.zip` to
 [issue #3](https://github.com/bhuiyah/infamous2-recomp/issues/3). README.md, *European copies (beta)*, says
 what is different.
 

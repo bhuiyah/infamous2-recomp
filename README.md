@@ -276,10 +276,13 @@ your disc + update ──RPCS3 decrypt──▶ EBOOT.elf, libsre.prx
   button work too. A save the game is writing finishes first.
 - **Something looks wrong?** Press **F8**: the moment is marked in the session's issues file and a
   screenshot is saved beside it.
-- **Reporting:** press **Save report** in the launcher (`logs\report-<date>.txt`: the build's state and
-  the logs' last lines, personal paths removed), and send it with `logs\play-<time>-issues.txt` and any
-  `-markN.png`. After a crash there is also a
-  `-crash.dmp`: useful, but it contains your Windows user name in file paths.
+- **Reporting:** press **Report a problem** in the launcher. Say what happened, tick what to include
+  (your newest logs always; your F8 screenshots, your game saves, your newest save state if you like) and
+  press *Create report*. It packs `logs\report-<date>.zip` (your user folder, user name and computer name
+  replaced in the logs), shows it, and opens a new GitHub issue filled in with what you wrote: drag the
+  .zip into it, or into a comment on an issue you already opened. Nothing is sent by itself. A save state
+  (~200 MB) is too big for GitHub: it goes into its own `-savestate.zip` to share with a link. After a
+  crash there is also a `-crash.dmp`: useful, but it contains your Windows user name in file paths.
   `set PLAY_ISSUES=0` turns the issues file off.
 - Save states (`savestates\`), texture dumps and the game's saves (`gamedata\`) are made from your copy of
   the game: never share or commit them.
@@ -303,11 +306,11 @@ Nobody on the team owns a European disc, so European support is built to be chec
 - Step 2 (check) accepts a BCES01143 / BCES01144 EBOOT it does not know by SHA-1 only when the game's
   structure resolves in it; anything else still stops there.
 
-**To help:** build and play, then press **Save report** in the launcher. It saves
-`logs\eu-report-<date>.txt` -- your EBOOT and libsre identity (SHA-1, size), what the build found in your
+**To help:** build and play, then press **Report a problem** in the launcher. It saves
+`logs\eu-report-<date>.zip` -- your EBOOT and libsre identity (SHA-1, size), what the build found in your
 EBOOT, the build state, and the last lines of the launcher's and the game's logs, with your user folder,
 user name and computer name replaced by `%USERPROFILE%`, `%USERNAME%` and `%COMPUTERNAME%`. Attach it to
-[issue #3](https://github.com/bhuiyah/infamous2-recomp/issues/3) (or a new issue). Save it again after
+[issue #3](https://github.com/bhuiyah/infamous2-recomp/issues/3) (or a new issue). Make it again after
 playing a while if something went wrong in game.
 
 ## Status and known issues

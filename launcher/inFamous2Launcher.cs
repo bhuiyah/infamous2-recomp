@@ -15,7 +15,7 @@
 // Command line (all optional; for shortcuts and scripted tests):
 //   --disc <dir> --update <dir> --eboot <EBOOT.elf> --libsre <libsre.prx | RPCS3 folder>   prefill the files dialog
 //   --detect-out <file>     write the prerequisite / game-file / build-state report to <file> and exit
-//   --report-out <file>     write the support report (what "Save report" saves: the EBOOT / libsre identity, the
+//   --report-out <file>     write the support report (what "Report a problem" saves: the EBOOT / libsre identity, the
 //                           resolver's report, the build state, the newest logs' tails; personal paths replaced by
 //                           %USERPROFILE%) to <file> and exit
 //   --update-check-out <file>  ask GitHub for the latest release, write what was understood to <file> and exit
@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.39";
+        public const string Version = "0.1.40";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -478,7 +478,7 @@ namespace Infamous2Launcher
                         if (id == "BCUS98125") f.Add(new Finding(0, "Disc: inFamous 2, BCUS98125 (North America)."));
                         else if (Ps3Files.IsBeta(id))
                             f.Add(new Finding(0, "Disc: inFamous 2, " + id + " (" + Ps3Files.BetaEditions[id] + ") -- BETA: European support is new. " +
-                                                 "If anything goes wrong, press Save report and send the file it saves."));
+                                                 "If anything goes wrong, press Report a problem and send the .zip it saves."));
                         else f.Add(new Finding(Ps3Files.AllowUnknown ? 1 : 2, "Disc: this is " + Ps3Files.EditionOf(id) + ". " + Ps3Files.Support));
                         if (!Directory.Exists(Path.Combine(g, "USRDIR"))) f.Add(new Finding(2, "Disc: PS3_GAME has no USRDIR folder."));
                         else
@@ -1803,6 +1803,59 @@ namespace Infamous2Launcher
     }
 
     // ------------------------------------------------------------------ main window
+    // "Report a problem" (MainForm.SaveReport): what the player puts in the report. Nothing is sent by itself: the
+    // launcher saves the .zip in logs\, shows it, and opens a pre-filled GitHub issue to drag it into.
+    class ReportForm : Form
+    {
+        readonly TextBox tWhat = new TextBox();
+        readonly CheckBox cShots = new CheckBox(), cSaves = new CheckBox(), cState = new CheckBox(), cIssue = new CheckBox();
+        public string What { get { return tWhat.Text.Trim(); } }
+        public bool Shots { get { return cShots.Checked; } }
+        public bool Saves { get { return cSaves.Checked; } }
+        public bool State { get { return cState.Checked; } }
+        public bool OpenIssue { get { return cIssue.Checked; } }
+
+        public ReportForm(int nShots, int nSaves, long saveBytes, string stateName, long stateBytes)
+        {
+            Text = "Report a problem";
+            Font = new Font("Segoe UI", 9f);
+            ClientSize = new Size(580, 420);
+            FormBorderStyle = FormBorderStyle.FixedDialog; MaximizeBox = false; MinimizeBox = false;
+            StartPosition = FormStartPosition.CenterParent;
+            var l1 = new Label { Left = 16, Top = 12, Width = 548, Height = 36,
+                Text = "What happened? Where in the game were you, and what did you see? (Optional: it goes into the report " +
+                       "and into the GitHub issue.)" };
+            tWhat.SetBounds(16, 50, 548, 110); tWhat.Multiline = true; tWhat.ScrollBars = ScrollBars.Vertical; tWhat.AcceptsReturn = true;
+            var l2 = new Label { Left = 16, Top = 172, Width = 548, Height = 18, Text = "Put in the report:" };
+            var cLogs = new CheckBox { Left = 24, Top = 194, Width = 540, Height = 20, Checked = true, Enabled = false,
+                Text = "Your newest logs (always; your user folder, user name and PC name are replaced in them)" };
+            cShots.SetBounds(24, 216, 540, 20);
+            cShots.Text = nShots > 0 ? "The screenshots you took with F8 in your last session (" + nShots + ")"
+                                     : "Screenshots you took with F8 (none in your last session)";
+            cShots.Checked = nShots > 0; cShots.Enabled = nShots > 0;
+            cSaves.SetBounds(24, 238, 540, 20);
+            cSaves.Text = nSaves > 0 ? "Your game saves (" + nSaves + ", " + Kb(saveBytes) + "), so the problem can be seen from the same spot"
+                                     : "Your game saves (none yet)";
+            cSaves.Checked = nSaves > 0; cSaves.Enabled = nSaves > 0;
+            cState.SetBounds(24, 260, 540, 36);
+            cState.Text = stateName != null
+                ? "Your newest save state (" + stateName + ", " + Mb(stateBytes) + "): too big for GitHub, so it is saved as a separate " +
+                  ".zip to share with a link (Google Drive, OneDrive, ...)"
+                : "Your newest save state (you have none: F5 in the game makes one)";
+            cState.Enabled = stateName != null;
+            cIssue.SetBounds(24, 304, 540, 20); cIssue.Text = "Open a new GitHub issue with this filled in"; cIssue.Checked = true;
+            var note = new Label { Left = 16, Top = 332, Width = 548, Height = 36, ForeColor = SystemColors.GrayText,
+                Text = "Nothing is sent by itself: the report is saved as a .zip in the logs folder, which then opens. Drag the " +
+                       ".zip into the issue (GitHub takes files up to 25 MB)." };
+            var bOk = new Button { Text = "Create report", Left = 372, Top = 380, Width = 110, Height = 28, DialogResult = DialogResult.OK };
+            var bNo = new Button { Text = "Cancel", Left = 488, Top = 380, Width = 76, Height = 28, DialogResult = DialogResult.Cancel };
+            Controls.AddRange(new Control[] { l1, tWhat, l2, cLogs, cShots, cSaves, cState, cIssue, note, bOk, bNo });
+            CancelButton = bNo;   /* no AcceptButton: Enter types a new line in the description */
+        }
+        static string Kb(long b) { return ((b + 1023) / 1024).ToString(CultureInfo.InvariantCulture) + " KB"; }
+        static string Mb(long b) { return (b / 1048576.0).ToString("0", CultureInfo.InvariantCulture) + " MB"; }
+    }
+
     partial class MainForm : Form
     {
         readonly string root;
@@ -1923,11 +1976,12 @@ namespace Infamous2Launcher
             btnLogs.Click += (s, e) => OpenFolder(Path.Combine(root, "logs"), null);
             btnFolder.Text = "Open game folder"; btnFolder.SetBounds(204, by + 6, 120, 30); btnFolder.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             btnFolder.Click += (s, e) => OpenFolder(root, File.Exists(ExePath) ? ExePath : null);
-            btnReport.Text = "Save report"; btnReport.SetBounds(330, by + 6, 96, 30); btnReport.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
+            btnReport.Text = "Report a problem"; btnReport.SetBounds(330, by + 6, 102, 30); btnReport.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             btnReport.Click += (s, e) => SaveReport();
-            new ToolTip().SetToolTip(btnReport, "Saves logs\\" + "report-<date>.txt and a .zip of it with your newest logs (for GitHub) (eu-report-... for a European copy): your EBOOT and libsre identity, " +
-                                     "what the build found in your EBOOT, the build state and the newest logs' last lines, with your user folder " +
-                                     "replaced by %USERPROFILE%. Attach it to your issue or beta report.");
+            new ToolTip().SetToolTip(btnReport, "Packs a report for GitHub into logs\\report-<date>.zip (eu-report-... for a European copy): your " +
+                                     "EBOOT and libsre identity, the build state and your newest logs (your user folder and names replaced), " +
+                                     "and if you choose, your F8 screenshots, game saves and newest save state. Then opens a new issue " +
+                                     "filled in with what you wrote: drag the .zip into it.");
             lnkOldBuild.Text = "Play the existing build without updating it"; lnkOldBuild.SetBounds(434, by + 12, 270, 20); lnkOldBuild.Anchor = AnchorStyles.Bottom | AnchorStyles.Left;
             lnkOldBuild.LinkClicked += (s, e) => LaunchGame();
             lblHint.SetBounds(434, by + 12, 272, 20); lblHint.Anchor = AnchorStyles.Bottom | AnchorStyles.Left; lblHint.ForeColor = SystemColors.GrayText;
@@ -2744,7 +2798,7 @@ namespace Infamous2Launcher
                 lock (qLock) t = string.Join("\r\n", tail.Skip(Math.Max(0, tail.Count - 25)));
                 MessageBox.Show(this, error + "\r\n\r\nThe last lines of the log:\r\n\r\n" + t + "\r\n\r\nFull log: " + logPath +
                                 "\r\n\r\nFix the cause and press Retry: the steps that already finished are not run again. " +
-                                "Asking for help? Press Save report and attach the file it saves.",
+                                "Asking for help? Press Report a problem and attach the .zip it saves.",
                                 "Build failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             else lblStep.Text = "Cancelled. Press \"Continue build\" to go on from the step that was interrupted.";
@@ -2908,34 +2962,136 @@ namespace Infamous2Launcher
             Process.Start("explorer.exe", select != null ? "/select,\"" + select + "\"" : "\"" + dir + "\"");
         }
 
-        // ---------------------------------------------------------- the support report (Save report, --report-out)
+        // ---------------------------------------------------------- the support report (Report a problem, --report-out)
         // The report as .txt plus a .zip of it with the newest logs: GitHub refuses .log attachments but takes a .zip.
         void SaveReport()
         {
             try
             {
-                string name = (Ps3Files.IsBeta(files.TitleId) ? "eu-report-" : "report-") + DateTime.Now.ToString("yyyyMMdd-HHmmss");
                 string logs = Path.Combine(root, "logs");
                 Directory.CreateDirectory(logs);
+                var shots = NewestMarkShots(logs);
+                var saveDirs = SaveDirs(root);
+                long saveBytes = 0;
+                foreach (var d in saveDirs) saveBytes += DirBytes(d);
+                FileInfo state = NewestSaveState(root);
+                var form = new ReportForm(shots.Count, saveDirs.Count, saveBytes, state != null ? state.Name : null, state != null ? state.Length : 0);
+                if (form.ShowDialog(this) != DialogResult.OK) return;
+
+                string name = (Ps3Files.IsBeta(files.TitleId) ? "eu-report-" : "report-") + DateTime.Now.ToString("yyyyMMdd-HHmmss");
                 string report = SupportReport(root);
+                if (form.What.Length > 0) report = "== what happened (the player's words)\r\n" + form.What + "\r\n\r\n" + report;
                 File.WriteAllText(Path.Combine(logs, name + ".txt"), report, new UTF8Encoding(false));
+                var extra = new List<KeyValuePair<string, string>>();
+                if (form.Shots)
+                    foreach (var s in shots) extra.Add(new KeyValuePair<string, string>("screenshots/" + s.Name, s.FullName));
+                if (form.Saves)
+                    foreach (var d in saveDirs)
+                        foreach (var f in Directory.GetFiles(d, "*", SearchOption.AllDirectories))
+                            extra.Add(new KeyValuePair<string, string>("savedata/" + Path.GetFileName(d) + "/" +
+                                                                       f.Substring(d.Length).TrimStart('\\').Replace('\\', '/'), f));
                 string zip = Path.Combine(logs, name + ".zip");
-                var inside = WriteReportZip(root, zip, name + ".txt", report);
-                Append("report saved: logs\\" + name + ".zip (" + string.Join(", ", inside) + "; personal paths replaced by %USERPROFILE%)");
+                var inside = WriteReportZip(root, zip, name + ".txt", report, extra);
+                string stateZip = null;
+                if (form.State && state != null)
+                {
+                    stateZip = Path.Combine(logs, name + "-savestate.zip");
+                    var sf = new List<KeyValuePair<string, string>> { new KeyValuePair<string, string>(state.Name, state.FullName) };
+                    string png = Path.ChangeExtension(state.FullName, ".png");
+                    if (File.Exists(png)) sf.Add(new KeyValuePair<string, string>(Path.GetFileName(png), png));
+                    WriteFilesZip(stateZip, sf, CompressionLevel.NoCompression);   /* a save state is compressed already */
+                }
+                long zipBytes = new FileInfo(zip).Length;
+                Append("report saved: logs\\" + name + ".zip (" + inside.Count + " file(s), " + (zipBytes / 1024) + " KB)" +
+                       (stateZip != null ? " and logs\\" + Path.GetFileName(stateZip) : ""));
                 OpenFolder(logs, zip);
-                var r = MessageBox.Show(this,
-                    "Saved logs\\" + name + ".zip with this report and your newest logs:\r\n    " + string.Join("\r\n    ", inside) +
-                    "\r\n\r\nYour user folder, user name and computer name are replaced in them.\r\n\r\n" +
-                    "GitHub takes .zip files (not .log): drag this .zip into a new issue or a comment.\r\n\r\nOpen the project's new-issue page now?",
-                    "Report saved", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
-                if (r == DialogResult.Yes) OpenUrl("https://github.com/" + AppInfo.Repo + "/issues/new");
+                if (form.OpenIssue) OpenUrl(IssueUrl(form.What, name, zipBytes, stateZip));
+                string msg = "Saved logs\\" + name + ".zip (" + (zipBytes / 1024) + " KB): this report, your newest logs" +
+                             (form.Shots && shots.Count > 0 ? ", your F8 screenshots" : "") + (form.Saves && saveDirs.Count > 0 ? ", your game saves" : "") + ".\r\n" +
+                             "Your user folder, user name and PC name are replaced in the logs.\r\n\r\n" +
+                             (form.OpenIssue ? "Drag the .zip into the GitHub issue that just opened (or into a comment on your existing issue)."
+                                             : "Drag the .zip into a new GitHub issue or a comment on your existing one.");
+                if (zipBytes > 25L << 20) msg += "\r\n\r\nIt is over GitHub's 25 MB limit: leave out the screenshots or saves, or share it with a link.";
+                if (stateZip != null)
+                    msg += "\r\n\r\nYour save state is in " + Path.GetFileName(stateZip) + " (" + (new FileInfo(stateZip).Length >> 20) + " MB), too big " +
+                           "for GitHub: upload it to Google Drive, OneDrive or similar and paste the link into the issue.";
+                MessageBox.Show(this, msg, "Report saved", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
             catch (Exception ex) { MessageBox.Show(this, "Could not save the report: " + ex.Message, Text, MessageBoxButtons.OK, MessageBoxIcon.Error); }
         }
 
+        // The F8 screenshots of the newest play session (logs\play-<time>-markN.png beside its issues file).
+        static List<FileInfo> NewestMarkShots(string logs)
+        {
+            var dir = new DirectoryInfo(logs);
+            var issues = dir.Exists ? dir.GetFiles("play-*-issues.txt").OrderByDescending(f => f.LastWriteTimeUtc).FirstOrDefault() : null;
+            if (issues == null) return new List<FileInfo>();
+            string stem = issues.Name.Substring(0, issues.Name.Length - "-issues.txt".Length);
+            return dir.GetFiles(stem + "-mark*.png").OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+        // The game's save folders (gamedata\dev_hdd0\home\00000001\savedata\<title id>_INFAMOUS2_<slot>).
+        static List<string> SaveDirs(string root)
+        {
+            string d = Path.Combine(root, @"gamedata\dev_hdd0\home\00000001\savedata");
+            if (!Directory.Exists(d)) return new List<string>();
+            return Directory.GetDirectories(d).Where(s => Path.GetFileName(s).IndexOf("_INFAMOUS2", StringComparison.OrdinalIgnoreCase) > 0)
+                            .OrderBy(s => s, StringComparer.OrdinalIgnoreCase).ToList();
+        }
+        static long DirBytes(string d)
+        {
+            long n = 0;
+            foreach (var f in Directory.GetFiles(d, "*", SearchOption.AllDirectories)) n += new FileInfo(f).Length;
+            return n;
+        }
+        // The newest save state the player made (savestates\<title id>\*.p3ss; the test states are not the player's).
+        static FileInfo NewestSaveState(string root)
+        {
+            var d = new DirectoryInfo(Path.Combine(root, "savestates"));
+            if (!d.Exists) return null;
+            return d.GetFiles("*.p3ss", SearchOption.AllDirectories)
+                    .Where(f => !string.Equals(f.Directory.Name, "test", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(f => f.LastWriteTimeUtc).FirstOrDefault();
+        }
+        // A new-issue link with the player's words, the PC lines of the newest issues file and what to attach.
+        string IssueUrl(string what, string name, long zipBytes, string stateZip)
+        {
+            string pc = "";
+            try
+            {
+                var dir = new DirectoryInfo(Path.Combine(root, "logs"));
+                var issues = dir.GetFiles("play-*-issues.txt").OrderByDescending(f => f.LastWriteTimeUtc).FirstOrDefault();
+                if (issues != null)
+                    foreach (var l in Scrub(ReadLogText(issues.FullName, 1 << 20)).Split('\n').Take(16))
+                        if (Regex.IsMatch(l, @"^(build|cpu|memory|gpu|os|display|settings)\s")) pc += l.TrimEnd('\r') + "\n";
+            }
+            catch { }
+            string w = what.Length > 3000 ? what.Substring(0, 3000) + " ..." : what;
+            string first = w.Split('\n')[0].Trim();
+            string title = first.Length > 0 ? (first.Length > 80 ? first.Substring(0, 80) + "..." : first) : "Problem report";
+            string body = "**What happened**\n\n" + (w.Length > 0 ? w : "(describe what you saw and where in the game)") + "\n\n" +
+                          "**Report**\n\nThe launcher saved `" + name + ".zip` (" + (zipBytes / 1024) + " KB) in the logs folder: " +
+                          "drag it into this box.\n" +
+                          (stateZip != null ? "\nMy save state is in `" + Path.GetFileName(stateZip) + "` (too big for GitHub). Link: (paste the Google Drive / OneDrive link here)\n" : "") +
+                          "\n**My PC** (launcher " + AppInfo.Version + ")\n\n```\n" + (pc.Length > 0 ? pc : "(no play session yet)\n") + "```\n";
+            return "https://github.com/" + AppInfo.Repo + "/issues/new?title=" + Uri.EscapeDataString(title) +
+                   "&body=" + Uri.EscapeDataString(body);
+        }
+        // Files into a zip as they are, under the given names.
+        static void WriteFilesZip(string zipPath, List<KeyValuePair<string, string>> items, CompressionLevel level)
+        {
+            if (File.Exists(zipPath)) File.Delete(zipPath);
+            using (var fs = new FileStream(zipPath, FileMode.CreateNew))
+            using (var z = new ZipArchive(fs, ZipArchiveMode.Create))
+                foreach (var it in items)
+                    using (var src = new FileStream(it.Value, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                    using (var es = z.CreateEntry(it.Key, level).Open())
+                        src.CopyTo(es);
+        }
+
         // report + the newest launcher log, game log (run-* / play-*) and play-session issues file, each scrubbed;
         // a log over 16 MB keeps its last 16 MB. Returns the names inside.
-        public static List<string> WriteReportZip(string root, string zipPath, string reportName, string report)
+        public static List<string> WriteReportZip(string root, string zipPath, string reportName, string report,
+                                                  List<KeyValuePair<string, string>> extra = null)
         {
             var names = new List<string>();
             var dir = new DirectoryInfo(Path.Combine(root, "logs"));
@@ -2963,6 +3119,19 @@ namespace Infamous2Launcher
                     try { put(f.Name, Scrub(ReadLogText(f.FullName, 16 << 20))); }
                     catch (Exception ex) { put(f.Name + ".unreadable.txt", "could not read " + f.Name + ": " + ex.Message); }
                 }
+                if (extra != null)
+                    foreach (var it in extra)
+                    {
+                        try
+                        {
+                            /* the file opened first: one that cannot be read leaves no empty entry */
+                            using (var src = new FileStream(it.Value, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                            using (var es = z.CreateEntry(it.Key, CompressionLevel.Fastest).Open())
+                                src.CopyTo(es);
+                            names.Add(it.Key);
+                        }
+                        catch (Exception ex) { put(it.Key + ".unreadable.txt", "could not read " + it.Key + ": " + ex.Message); }
+                    }
             }
             return names;
         }
@@ -3006,7 +3175,12 @@ namespace Infamous2Launcher
             }
             string user = Environment.UserName;
             if (!string.IsNullOrEmpty(user) && user.Length >= 3)
+            {
                 t = Regex.Replace(t, @"(?<=[\\/]Users[\\/]+)" + Regex.Escape(user) + @"(?=[\\/])", "%USERNAME%", RegexOptions.IgnoreCase);
+                /* anywhere else as a word too: the game's threads log into one file, so a path can come apart
+                   ("C:\Users\" ... another thread's line ... "name\Downloads") and the patterns above miss it */
+                t = Regex.Replace(t, @"(?<![A-Za-z0-9_])" + Regex.Escape(user) + @"(?![A-Za-z0-9_])", "%USERNAME%", RegexOptions.IgnoreCase);
+            }
             string machine = Environment.MachineName;
             if (!string.IsNullOrEmpty(machine) && machine.Length >= 3)
                 t = Regex.Replace(t, @"\b" + Regex.Escape(machine) + @"\b", "%COMPUTERNAME%", RegexOptions.IgnoreCase);
