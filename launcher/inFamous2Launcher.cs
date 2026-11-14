@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.38";
+        public const string Version = "0.1.39";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -816,7 +816,7 @@ namespace Infamous2Launcher
             new StepDef("libsre",  "Translate the SPURS library (libsre)", 5, @"generated\prx\libsre.linked.bin",
                         @"tools\lift_libsre.sh", @"config\ss_cont_list_libsre.txt"),
             new StepDef("jobs",    "Translate the SPURS jobs", 18, @"generated\spu_jobs",
-                        @"tools\lift_jobs.sh", @"tools\extract_eboot_jobs.py", @"tools\lift_policy.py", @"tools\lift_jobchain.py",
+                        @"tools\lift_jobs.sh", @"tools\spu_postlift.py", @"tools\extract_eboot_jobs.py", @"tools\lift_policy.py", @"tools\lift_jobchain.py",
                         @"tools\extract_policy_modules.py"),
             new StepDef("build",   "Compile the game (the long step)", 47, @"build\infamous2.exe",
                         "CMakeLists.txt", @"src\*", @"tools\build.ps1"),

@@ -215,6 +215,8 @@ add_executable(${PROJECT_NAME}
     src/if2_edge_native.c
     src/if2_bsp_native.c
     src/if2_rlist_native.c
+    src/if2_scene_native.c
+    src/if2_cull_native.c
     src/if2_achievements.cpp
     ${PS3RECOMP_SCAFFOLD}
     ${HLE_NID_TABLE}
@@ -283,12 +285,13 @@ set_source_files_properties(src/if2_edge_native.c PROPERTIES
     INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/spu"
     COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/O2,-O2>")
 ps3recomp_apply_spu_isa(src/if2_edge_native.c)
-# The native BSP clipper of job 216 (src/if2_bsp_native.c) and render-list builder of job 225
-# (src/if2_rlist_native.c): built the same way.
-set_source_files_properties(src/if2_bsp_native.c src/if2_rlist_native.c PROPERTIES
+# The native BSP clipper of job 216 (src/if2_bsp_native.c), render-list builder of job 225
+# (src/if2_rlist_native.c), scene walker of job 209 (src/if2_scene_native.c) and instance culler of job 207
+# (src/if2_cull_native.c): built the same way.
+set_source_files_properties(src/if2_bsp_native.c src/if2_rlist_native.c src/if2_scene_native.c src/if2_cull_native.c PROPERTIES
     INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/spu"
     COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/O2,-O2>")
-ps3recomp_apply_spu_isa(src/if2_bsp_native.c src/if2_rlist_native.c)
+ps3recomp_apply_spu_isa(src/if2_bsp_native.c src/if2_rlist_native.c src/if2_scene_native.c src/if2_cull_native.c)
 
 # app.rc carries the icon, the version block and the manifest, and needs a
 # resource compiler. Listing it as a source on a host that has none is not a

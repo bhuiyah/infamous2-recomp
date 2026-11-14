@@ -22,9 +22,10 @@ is either fetched by the build from its own source or merely referred to.
 
 ## Native SPU job rewrites
 
-- **What:** `src/if2_rlist_native.c` (the render-list builder of SPU job 225) and `src/if2_bsp_native.c` (the BSP
-  polygon clipper of SPU job 216): C rewrites of what those jobs compute, adapted from MIT-licensed code and checked
-  against the translated SPU code with their live checks (`RLIST_NATIVE=2`, `BSP_NATIVE=2`).
+- **What:** `src/if2_rlist_native.c` (the render-list builder of SPU job 225), `src/if2_bsp_native.c` (the BSP
+  polygon clipper of SPU job 216), `src/if2_scene_native.c` (the scene walker of job 209) and `src/if2_cull_native.c`
+  (the instance culler of job 207): C rewrites of what those jobs compute, adapted from MIT-licensed code and checked
+  against the translated SPU code with their live checks (`RLIST_NATIVE=2`, `BSP_NATIVE=2`, `SCENE_NATIVE=2`, `CULL_NATIVE=2`).
 - **Licence:** MIT; the copyright and permission notices are at the top of each file.
 
 ## Referred to, not included
