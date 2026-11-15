@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.40";
+        public const string Version = "0.1.41";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -588,6 +588,57 @@ namespace Infamous2Launcher
                 }
             }
             return f;
+        }
+    }
+
+    // ------------------------------------------------------------------ the processor
+    // The game's SPU code is compiled for x86-64-v3 (AVX2, FMA3, BMI1/2). On a CPU without them the runtime stops
+    // before the first frame with "[spu] FATAL: ... compiled for x86-64-v3" on stderr (logs\run-*.log) and exit
+    // code 1, which players saw as "the game always closes" (issue #25: Xeon E5-2667, Sandy Bridge).
+    static class Cpu
+    {
+        [DllImport("kernel32.dll")] static extern bool IsProcessorFeaturePresent(uint feature);
+        const uint PF_AVX = 39, PF_AVX2 = 40;   // newer Windows 10/11 fill these in; older ones leave both false
+
+        static bool Pf(uint f) { try { return IsProcessorFeaturePresent(f); } catch { return false; } }
+
+        // true only when Windows reports AVX but not AVX2: then it surely knows, and the CPU lacks AVX2.
+        public static bool KnownNoAvx2 { get { return Pf(PF_AVX) && !Pf(PF_AVX2); } }
+
+        public static string Avx2Text
+        {
+            get { return Pf(PF_AVX2) ? "yes" : KnownNoAvx2 ? "NO (the game cannot run)" : "unknown (Windows does not say)"; }
+        }
+
+        public static string Name
+        {
+            get
+            {
+                try
+                {
+                    using (var k = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"HARDWARE\DESCRIPTION\System\CentralProcessor\0"))
+                    {
+                        var v = k != null ? k.GetValue("ProcessorNameString") as string : null;
+                        if (!string.IsNullOrEmpty(v)) return v.Trim();
+                    }
+                }
+                catch { }
+                return "this processor";
+            }
+        }
+
+        public const string FatalMarker = "[spu] FATAL: this build's lifted SPU code was compiled for";
+
+        public static string Help
+        {
+            get
+            {
+                return "Your processor (" + Name + ") does not have AVX2, and the game needs it.\r\n\r\n" +
+                       "AVX2 is in every Intel Core / Xeon from Haswell on (4th-generation Core, Xeon E5 v3, 2013 and later) " +
+                       "and in every AMD Ryzen. Older processors, such as 2nd/3rd-generation Core (Sandy Bridge, Ivy Bridge) " +
+                       "and Xeon E5 v1/v2, cannot run this build: the game stops right away, before the first picture.\r\n\r\n" +
+                       "This is not something wrong with your files or the build; there is no build for older processors at the moment.";
+            }
         }
     }
 
@@ -2583,6 +2634,12 @@ namespace Infamous2Launcher
             if (building) return;
             string folder = FolderProblem(root);   // asked at startup (Program.Main); the build log says it again
             if (folder != null) Append("folder check: " + folder.Replace("\r\n", " "));
+            if (Cpu.KnownNoAvx2)
+            {
+                Append("processor: " + Cpu.Name + " has no AVX2 (the game needs it)");
+                if (MessageBox.Show(this, Cpu.Help + "\r\n\r\nBuild anyway?", Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                    return;
+            }
             try
             {
                 var drive = new DriveInfo(Path.GetPathRoot(root));
@@ -2954,6 +3011,20 @@ namespace Infamous2Launcher
             if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
             RefreshUi();
             lblStep.Text = code == 0 ? "The game closed." : "The game ended with exit code " + code + ". Its log is in logs\\ (Open logs).";
+            if (newest != null && LogSaysNoAvx2(newest))
+            {
+                Append("the game stopped: " + Cpu.Name + " has no AVX2 (see logs\\" + newest.Name + ")");
+                lblStep.Text = "The game cannot run on this processor (no AVX2).";
+                MessageBox.Show(this, Cpu.Help, Text, MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        // The run log is written by PowerShell's Tee-Object (UTF-16 with a BOM); ReadAllText follows the BOM.
+        // The FATAL line comes before the first frame, so a log that has it is small.
+        public static bool LogSaysNoAvx2(FileInfo log)
+        {
+            try { return log.Length < (8L << 20) && File.ReadAllText(log.FullName).Contains(Cpu.FatalMarker); }
+            catch { return false; }
         }
 
         static void OpenFolder(string dir, string select)
@@ -3211,6 +3282,7 @@ namespace Infamous2Launcher
             L("folder check: " + (folder == null ? "ok" : folder.Replace("\r\n", " ")));
             L("Windows: " + Environment.OSVersion.VersionString + (Environment.Is64BitOperatingSystem ? ", 64-bit" : "") +
               "; language " + CultureInfo.CurrentUICulture.Name);
+            L("processor: " + Cpu.Name + "; AVX2 (the game needs it): " + Cpu.Avx2Text);
             L("");
             L("== your files (analysis\\inputs.json, written by step 2)");
             var gf = new GameFiles(root);
