@@ -1040,7 +1040,14 @@ static void first_install_notice(void)
     const char* hdd0 = getenv("PS3_HDD0_ROOT");
     char base[MAX_PATH * 2];
     if (hdd0 && *hdd0) snprintf(base, sizeof base, "%s", hdd0);
-    else if (!GetFullPathNameA("game\\hdd0", sizeof base, base, NULL)) return;
+    else {
+        /* No PS3_HDD0_ROOT (a disc-EBOOT build): the toolkit maps /dev_hdd0 into the VFS root, so the game installs
+         * to game\disc\game\<title>_INSTALL (cellGame content_root, sys_fs). Looking in game\hdd0 instead showed the
+         * first-start notice on every start (issue #30). */
+        const char* vfs = getenv("PS3_VFS_ROOT");
+        if (vfs && *vfs) snprintf(base, sizeof base, "%s", vfs);
+        else if (!GetFullPathNameA("game\\disc", sizeof base, base, NULL)) return;
+    }
     /* the edition's own folder: BCUS98125_INSTALL, BCES01143_INSTALL (Europe)... */
     snprintf(s_install_dir, sizeof s_install_dir, "%s\\game\\%s_INSTALL", base, IF2_TITLE_ID);
     for (char* c = s_install_dir; *c; c++) if (*c == '/') *c = '\\';
