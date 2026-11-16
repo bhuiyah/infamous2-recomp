@@ -33,7 +33,12 @@ extern uint8_t* vm_base;
 
 namespace {
 
-const int kImage = 218;                 /* jobmod_c6e7383dc013 (generated/spu_jobs/jobmods_register.c) */
+#include "if2_job_images.h"
+#ifdef IF2_IMG_jobmod_c6e7383dc013_e5400
+const int kImage = IF2_IMG_jobmod_c6e7383dc013_e5400;   /* 218 in the US builds */
+#else
+const int kImage = IF2_IMG_MISSING;     /* this copy has no jobmod_c6e7383dc013_e5400: GL1 off */
+#endif
 const uint32_t kKernel = 0x4AC8;        /* the per-tile lighting kernel */
 const uint32_t kC0 = 0x47400B80u;       /* normals in, diffuse out */
 const uint32_t kC1 = 0x47784B80u;       /* depth in, specular out */
@@ -150,6 +155,10 @@ extern "C" void if2_glight_configure(void)
     const int on = !(ov[0] == '0' || !strcmp(ov, "off") || !strcmp(ov, "false"));
     s_verify = v && *v && *v != '0';
     if (!on && !s_verify) return;
+    if (kImage < 0) {
+        fprintf(stderr, "[GLIGHT] this copy has no jobmod_c6e7383dc013_e5400 (the lighting job GL1 was made from): GL1 off%c", 10);
+        return;
+    }
     s_orig = spu_registry_replace(kImage, kKernel, kernel_stub);
     if (!s_orig) {
         fprintf(stderr, "[GLIGHT] the lighting job's kernel (image %d, LS 0x%X) is not lifted: GL1 off%c", kImage, kKernel, 10);

@@ -49,7 +49,12 @@ extern uint8_t* vm_base;
 void spu_wrch(spu_context* ctx, uint32_t channel, u128 value);
 u128 spu_rdch(spu_context* ctx, uint32_t channel);
 
-#define BC11_IMAGE  209   /* jobmod_867e5d2348b3_e2898 */
+#include "if2_job_images.h"
+#ifdef IF2_IMG_jobmod_867e5d2348b3_e2898
+#define BC11_IMAGE IF2_IMG_jobmod_867e5d2348b3_e2898   /* 209 in the US builds */
+#else
+#define BC11_IMAGE IF2_IMG_MISSING   /* this copy has no jobmod_867e5d2348b3_e2898: native off */
+#endif
 #define BC11_WORKER 0x4358u
 
 #define BC11_QMAX     384      /* 0x4278: the queue refuses a push at count > 383 */
@@ -928,6 +933,7 @@ void if2_scene_configure(void)
     const char* e = getenv("SCENE_NATIVE");
     s_mode = e ? atoi(e) : 1;
     if (!s_mode) { fprintf(stderr, "[SCENE] native scene walker off (SCENE_NATIVE=0)\n"); return; }
+    if (BC11_IMAGE < 0) { fprintf(stderr, "[SCENE] this copy has no jobmod_867e5d2348b3_e2898 (the module the native scene walker was made from): native off\n"); s_mode = 0; return; }
     s_scene_orig = spu_registry_replace(BC11_IMAGE, BC11_WORKER, scene_hook);
     if (!s_scene_orig) { fprintf(stderr, "[SCENE] 0x4358 is not lifted as replaceable: native off\n"); s_mode = 0; return; }
     fprintf(stderr, "[SCENE] native scene walker %s (image %d, 0x%X)\n", s_mode == 2 ? "in live-check mode" : "on",

@@ -36,7 +36,9 @@ for p in glob.glob("generated/spu_jobs/*/spu_recomp.[ch]"):
     debase_includes(p)
 PYEOF
 # Tail branches a native rewrite replaces (a plain br, not a brsl: the culler's worker of job 207 at 0x4030,
-# src/if2_cull_native.c): through the dispatcher too (tools/spu_postlift.py).
+# src/if2_cull_native.c): through the dispatcher too (tools/spu_postlift.py). The modules are named by their bytes'
+# SHA-1: a copy without one of them (a European EBOOT) skips it here, and spu_postlift.py's
+# generated/spu_jobs/if2_job_images.h (image numbers by name) keeps that native rewrite off (src/if2_job_images.h).
 export SPU_JOBMOD_INDIRECT_TAILS="${SPU_JOBMOD_INDIRECT_TAILS-jobmod_7393701cbd39_e1390:0x4030}"
 "$PY" tools/spu_postlift.py generated/spu_jobs
 

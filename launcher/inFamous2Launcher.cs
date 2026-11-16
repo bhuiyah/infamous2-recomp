@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.42";
+        public const string Version = "0.1.43";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -3230,6 +3230,10 @@ namespace Infamous2Launcher
                 add.Add(newest(dir.GetFiles("run-*.log").Concat(dir.GetFiles("play-*.log"))));
                 add.Add(newest(dir.GetFiles("play-*-issues.txt")));
             }
+            /* the save states' thread census (the game writes it in its folder): after a failed F5 it names the
+               threads and return addresses the save could not cover */
+            var chains = new FileInfo(Path.Combine(root, "ss_chains.txt"));
+            if (chains.Exists) add.Add(chains);
             if (File.Exists(zipPath)) File.Delete(zipPath);
             using (var fs = new FileStream(zipPath, FileMode.CreateNew))
             using (var z = new ZipArchive(fs, ZipArchiveMode.Create))

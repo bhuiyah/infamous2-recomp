@@ -49,7 +49,12 @@ extern uint8_t* vm_base;
 void spu_wrch(spu_context* ctx, uint32_t channel, u128 value);
 u128 spu_rdch(spu_context* ctx, uint32_t channel);
 
-#define EC5F_IMAGE 225
+#include "if2_job_images.h"
+#ifdef IF2_IMG_jobmod_ed956f3d8d84_e14ff0
+#define EC5F_IMAGE IF2_IMG_jobmod_ed956f3d8d84_e14ff0   /* 225 in the US builds */
+#else
+#define EC5F_IMAGE IF2_IMG_MISSING   /* this copy has no jobmod_ed956f3d8d84_e14ff0: native off */
+#endif
 #define EC5F_MAIN  0x12C60u
 #define F1 0x3F800000u
 
@@ -916,6 +921,7 @@ void if2_rlist_configure(void)
     const char* e = getenv("RLIST_NATIVE");
     s_mode = e ? atoi(e) : 1;
     if (!s_mode) { fprintf(stderr, "[RLIST] native render-list builder off (RLIST_NATIVE=0)\n"); return; }
+    if (EC5F_IMAGE < 0) { fprintf(stderr, "[RLIST] this copy has no jobmod_ed956f3d8d84_e14ff0 (the module the native render-list builder was made from): native off\n"); s_mode = 0; return; }
     s_rl_orig = spu_registry_replace(EC5F_IMAGE, EC5F_MAIN, rl_hook);
     if (!s_rl_orig) { fprintf(stderr, "[RLIST] 0x12C60 is not lifted as replaceable: native off\n"); s_mode = 0; return; }
     fprintf(stderr, "[RLIST] native render-list builder %s (image %d, 0x%X)\n",

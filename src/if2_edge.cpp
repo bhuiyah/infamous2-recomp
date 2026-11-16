@@ -29,7 +29,12 @@ spu_fn_t spu_registry_replace(int image_id, uint32_t addr, spu_fn_t fn);
 
 namespace {
 
-const int kImage = 222;                 /* jobmod_d0d15ec83992 (generated/spu_jobs/jobmods_register.c) */
+#include "if2_job_images.h"
+#ifdef IF2_IMG_jobmod_d0d15ec83992_ea2a0
+const int kImage = IF2_IMG_jobmod_d0d15ec83992_ea2a0;   /* 222 in the US builds */
+#else
+const int kImage = IF2_IMG_MISSING;     /* this copy has no jobmod_d0d15ec83992_ea2a0: EG off */
+#endif
 const uint32_t kSegment = 0x5740;       /* per segment: (work, config, ..., pointer table, ...) */
 struct Stage { uint32_t addr; const char* name; };
 const Stage kStages[] = {
@@ -348,6 +353,10 @@ const spu_fn_t kStageHooks[kNStages] = { stage_hook<0>, stage_hook<1>, stage_hoo
 extern "C" void if2_edge_configure(void)
 {
     const char* e;
+    if (kImage < 0) {
+        fprintf(stderr, "[EG] this copy has no jobmod_d0d15ec83992_ea2a0 (the Edge job the native geometry was made from): EG off%c", 10);
+        return;
+    }
     s_dump_left = (e = getenv("EG_DUMP")) ? atoi(e) : 0;
     s_census = (e = getenv("EG_CENSUS")) && *e && *e != '0';
     s_spin = (e = getenv("EG_SPIN")) ? atoi(e) : 0;

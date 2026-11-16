@@ -47,7 +47,12 @@ extern uint8_t* vm_base;
 void spu_wrch(spu_context* ctx, uint32_t channel, u128 value);
 u128 spu_rdch(spu_context* ctx, uint32_t channel);
 
-#define J207_IMAGE  207   /* jobmod_7393701cbd39_e1390 */
+#include "if2_job_images.h"
+#ifdef IF2_IMG_jobmod_7393701cbd39_e1390
+#define J207_IMAGE IF2_IMG_jobmod_7393701cbd39_e1390   /* 207 in the US builds */
+#else
+#define J207_IMAGE IF2_IMG_MISSING   /* this copy has no jobmod_7393701cbd39_e1390: native off */
+#endif
 #define J207_WORKER 0x4030u
 
 #define J207_ITEMS    1792     /* the 1,792nd item flushes the batch */
@@ -699,6 +704,7 @@ void if2_cull_configure(void)
     const char* e = getenv("CULL_NATIVE");
     s_mode = e ? atoi(e) : 1;
     if (!s_mode) { fprintf(stderr, "[CULL] native instance culler off (CULL_NATIVE=0)\n"); return; }
+    if (J207_IMAGE < 0) { fprintf(stderr, "[CULL] this copy has no jobmod_7393701cbd39_e1390 (the module the native instance culler was made from): native off\n"); s_mode = 0; return; }
     s_cull_orig = spu_registry_replace(J207_IMAGE, J207_WORKER, cull_hook);
     if (!s_cull_orig) { fprintf(stderr, "[CULL] 0x4030 is not lifted as replaceable: native off\n"); s_mode = 0; return; }
     fprintf(stderr, "[CULL] native instance culler %s (image %d, 0x%X)\n", s_mode == 2 ? "in live-check mode" : "on",

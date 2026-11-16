@@ -53,7 +53,12 @@
 #pragma GCC optimize("fp-contract=off")
 #endif
 
-#define J220_IMAGE 216   /* jobmod_9cb47b0cc0eb_e60c0 */
+#include "if2_job_images.h"
+#ifdef IF2_IMG_jobmod_9cb47b0cc0eb_e60c0
+#define J220_IMAGE IF2_IMG_jobmod_9cb47b0cc0eb_e60c0   /* 216 in the US builds */
+#else
+#define J220_IMAGE IF2_IMG_MISSING   /* this copy has no jobmod_9cb47b0cc0eb_e60c0: native off */
+#endif
 #define J220_BSP   0x68D8u
 #define LSQ        0x3FFF0u
 #define CSR_FAST   0xFFC0u               /* RZ | FZ | DAZ, all exceptions masked */
@@ -531,6 +536,7 @@ void if2_bsp_configure(void)
     const char* e = getenv("BSP_NATIVE");
     if (e && e[0] == '0') { fprintf(stderr, "[BSP] native clipper off (BSP_NATIVE=0)\n"); return; }
     if (e && e[0] == '2') s_bsp_mode = 2;
+    if (J220_IMAGE < 0) { fprintf(stderr, "[BSP] this copy has no jobmod_9cb47b0cc0eb_e60c0 (the module the native clipper was made from): native off\n"); return; }
     s_bsp_orig = spu_registry_replace(J220_IMAGE, J220_BSP, bsp_hook);
     if (!s_bsp_orig) { fprintf(stderr, "[BSP] 0x68D8 is not lifted as replaceable: native clipper off\n"); return; }
     fprintf(stderr, "[BSP] native clipper %s (image %d, 0x%X)\n", s_bsp_mode == 2 ? "in live-check mode" : "on",
