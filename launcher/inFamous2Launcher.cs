@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.41";
+        public const string Version = "0.1.42";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -657,11 +657,13 @@ namespace Infamous2Launcher
             var list = new List<Prereq>();
             string o1;
 
-            // Git for Windows: build.ps1 runs Git Bash from Program Files; setup.ps1 runs git.
+            // Git for Windows: build.ps1 runs Git Bash (passed on as IF2_BASH); setup.ps1 runs git.
+            // Issue #29: Git installed elsewhere is found through git.exe on PATH (its own bin\bash.exe, never the
+            // System32 bash.exe of WSL), or named outright with the IF2_BASH environment variable.
             var git = new Prereq { Id = "git", Name = "Git for Windows (with Git Bash)", Why = "fetches the toolkit, runs the lift scripts", WingetId = "Git.Git", Url = "https://git-scm.com/download/win" };
-            foreach (var b in new[] { Path.Combine(Util.Pf, @"Git\bin\bash.exe"), Path.Combine(Util.Pf86, @"Git\bin\bash.exe") })
-                if (File.Exists(b)) { git.Ok = true; git.Found = b; break; }
-            if (!git.Ok) git.Note = "Git Bash must be in Program Files\\Git (the installer's default).";
+            string gb = FindGitBash(path);
+            if (gb != null) { git.Ok = true; git.Found = gb; }
+            else git.Note = "Git Bash not found: install Git for Windows, or put its cmd folder on PATH, or set IF2_BASH to its bin\\bash.exe.";
             list.Add(git);
 
             // Python 3.10+
@@ -751,8 +753,9 @@ namespace Infamous2Launcher
             // in MSVC mode unless the whole file is built for that CPU, so the runtime's per-function
             // target("avx512...") paths fail with "unknown type name '__m512i'" (issue #8, clang 18.1.8).
             var llvm = new Prereq { Id = "llvm", Name = "LLVM 19 or newer (clang-cl)", Why = "the compiler", WingetId = "LLVM.LLVM", Url = "https://github.com/llvm/llvm-project/releases/latest" };
-            string cl = Path.Combine(Util.Pf, @"LLVM\bin\clang-cl.exe");
-            if (File.Exists(cl))
+            // Issue #29: LLVM installed elsewhere is found through clang-cl.exe on PATH, or IF2_CLANG_CL.
+            string cl = FindClangCl(path);
+            if (cl != null)
             {
                 Version cv = ClangVersion(cl);
                 if (cv != null && cv.Major < MinClangMajor)
@@ -762,11 +765,63 @@ namespace Infamous2Launcher
                 }
                 else { llvm.Ok = true; llvm.Found = cl + (cv != null ? " (" + cv + ")" : ""); }
             }
-            else llvm.Note = "clang-cl must be in Program Files\\LLVM (the installer's default).";
+            else llvm.Note = "clang-cl not found: install LLVM, or put its bin folder on PATH, or set IF2_CLANG_CL to its clang-cl.exe.";
             list.Add(llvm);
 
             foreach (var p in list) if (o.PretendMissing.Contains(p.Id)) { p.Ok = false; p.Found = null; p.Note = "(shown as missing: --pretend-missing)"; }
             return list;
+        }
+
+        static string EnvFile(string name)
+        {
+            string v = Environment.GetEnvironmentVariable(name);
+            if (string.IsNullOrEmpty(v)) return null;
+            v = v.Trim().Trim('"');
+            try { return File.Exists(v) ? Path.GetFullPath(v) : null; } catch { return null; }
+        }
+        // Git Bash: IF2_BASH, Program Files, then the Git install that owns a git.exe on PATH (<git>\cmd, \bin or
+        // \mingw64\bin) -- its bin\bash.exe. A bare bash.exe on PATH may be WSL's, which cannot run the scripts.
+        public static string FindGitBash(string path)
+        {
+            string e = EnvFile("IF2_BASH");
+            if (e != null) return e;
+            foreach (var b in new[] { Path.Combine(Util.Pf, @"Git\bin\bash.exe"), Path.Combine(Util.Pf86, @"Git\bin\bash.exe") })
+                if (File.Exists(b)) return b;
+            string g = Util.FindOnPath("git.exe", path);
+            if (g == null) return null;
+            string d = Path.GetDirectoryName(g);
+            for (int up = 0; up < 3 && d != null; up++, d = Path.GetDirectoryName(d))
+            {
+                string b = Path.Combine(d, @"bin\bash.exe");
+                if (File.Exists(b) && File.Exists(Path.Combine(d, @"usr\bin\sh.exe"))) return b;
+            }
+            return null;
+        }
+        public static string FindClangCl(string path)
+        {
+            string e = EnvFile("IF2_CLANG_CL");
+            if (e != null) return e;
+            string cl = Path.Combine(Util.Pf, @"LLVM\bin\clang-cl.exe");
+            if (File.Exists(cl)) return cl;
+            return Util.FindOnPath("clang-cl.exe", path);
+        }
+        static string FoundFile(List<Prereq> list, string id)
+        {
+            foreach (var p in list)
+            {
+                if (p.Id != id || !p.Ok || p.Found == null) continue;
+                string f = p.Found;
+                int paren = f.IndexOf(" (", StringComparison.Ordinal);
+                return paren > 0 ? f.Substring(0, paren) : f;
+            }
+            return null;
+        }
+        // tools\build.ps1 takes Git Bash and clang-cl from these when set (issue #29: tools outside Program Files).
+        public static void SetToolEnv(ProcessStartInfo psi, List<Prereq> list)
+        {
+            string b = FoundFile(list, "git"), c = FoundFile(list, "llvm");
+            if (b != null) psi.EnvironmentVariables["IF2_BASH"] = b;
+            if (c != null) psi.EnvironmentVariables["IF2_CLANG_CL"] = c;
         }
 
         // Folders the build's processes need on PATH: where CMake, Ninja, Git and Python were found.
@@ -2716,6 +2771,7 @@ namespace Infamous2Launcher
                 StandardErrorEncoding = Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage),
             };
             psi.EnvironmentVariables["PATH"] = Prereqs.ChildPath(prereqs);
+            Prereqs.SetToolEnv(psi, prereqs);
             psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
             psi.EnvironmentVariables["NINJA_STATUS"] = "[%f/%t] ";
             if (toolkitOk && s.Id == "setup") psi.EnvironmentVariables["IF2_TOOLKIT_DOWNLOAD"] = "yes";
@@ -3761,6 +3817,7 @@ namespace Infamous2Launcher
                 StandardErrorEncoding = Encoding.GetEncoding(CultureInfo.CurrentCulture.TextInfo.OEMCodePage),
             };
             psi.EnvironmentVariables["PATH"] = Prereqs.ChildPath(prereqs);
+            Prereqs.SetToolEnv(psi, prereqs);
             psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
             psi.EnvironmentVariables["NINJA_STATUS"] = "[%f/%t] ";
             if (yes && s.Id == "setup") psi.EnvironmentVariables["IF2_TOOLKIT_DOWNLOAD"] = "yes";

@@ -47,9 +47,27 @@ $steps = if ($Step) { @($Step) } elseif ($BuildOnly) { @("build") }
 function Want($s) { return $steps -contains $s }
 
 # --- tools ---------------------------------------------------------------------
-$bash = @("$env:ProgramFiles\Git\bin\bash.exe", "${env:ProgramFiles(x86)}\Git\bin\bash.exe") |
-        Where-Object { Test-Path $_ } | Select-Object -First 1
-$clang = "$env:ProgramFiles\LLVM\bin\clang-cl.exe"
+# Git Bash and clang-cl: IF2_BASH / IF2_CLANG_CL (the launcher sets them), Program Files, then PATH (issue #29).
+# Git on PATH means the Git install that owns git.exe (its bin\bash.exe), never a bare bash.exe (WSL's).
+$bash = @($env:IF2_BASH, "$env:ProgramFiles\Git\bin\bash.exe", "${env:ProgramFiles(x86)}\Git\bin\bash.exe") |
+        Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+if (-not $bash) {
+    $g = Get-Command git.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($g) {
+        $d = Split-Path $g.Source
+        for ($up = 0; $up -lt 3 -and $d -and -not $bash; $up++) {
+            $b = Join-Path $d "bin\bash.exe"
+            if ((Test-Path -LiteralPath $b) -and (Test-Path -LiteralPath (Join-Path $d "usr\bin\sh.exe"))) { $bash = $b }
+            $d = Split-Path $d
+        }
+    }
+}
+$clang = @($env:IF2_CLANG_CL, "$env:ProgramFiles\LLVM\bin\clang-cl.exe") |
+         Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+if (-not $clang) {
+    $c = Get-Command clang-cl.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    $clang = if ($c) { $c.Source } else { "$env:ProgramFiles\LLVM\bin\clang-cl.exe" }
+}
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 if ((Want "analyze") -or (Want "lift") -or (Want "libsre") -or (Want "jobs")) {
     Need $bash "Git Bash not found -- install Git for Windows"
@@ -59,7 +77,7 @@ if ((Want "setup") -or (Want "check") -or (Want "analyze") -or (Want "lift") -or
     Write-Host "Python: $py"
 }
 if (Want "build") {
-    Need (Test-Path $clang) "clang-cl not found at $clang -- install LLVM"
+    Need (Test-Path -LiteralPath $clang) "clang-cl not found at $clang -- install LLVM (or set IF2_CLANG_CL)"
     Need (Test-Path $vswhere) "vswhere not found -- install Visual Studio 2022 Build Tools (C++)"
     $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
     Need $vs "No Visual Studio install with the C++ tools found"
