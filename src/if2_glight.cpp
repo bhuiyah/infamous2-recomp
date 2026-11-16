@@ -21,6 +21,7 @@
 #include "spu_context.h"
 #include "rsx_d3d12_glight.h"
 #include "ps3emu/options.h"
+#include "if2_version.h"
 
 extern "C" {
 typedef void (*spu_fn_t)(spu_context*);
@@ -155,6 +156,14 @@ extern "C" void if2_glight_configure(void)
     const int on = !(ov[0] == '0' || !strcmp(ov, "off") || !strcmp(ov, "false"));
     s_verify = v && *v && *v != '0';
     if (!on && !s_verify) return;
+#if !IF2_EBOOT_KNOWN
+    /* The lighting module itself can match a US build's, but the SSAO job's and its plug-ins' image numbers, the
+     * SSAO parameters' guest address and the G-buffer copies' addresses above are the US EBOOTs' (issue 30: a
+     * European copy got green, unlit scenes). Off here: the lighting and SSAO jobs run on the SPUs as before. */
+    fprintf(stderr, "[GLIGHT] the GPU lighting is made for the US EBOOTs (%s is not one): GL1 off, the SPUs light%c",
+            IF2_EBOOT_NAME, 10);
+    return;
+#endif
     if (kImage < 0) {
         fprintf(stderr, "[GLIGHT] this copy has no jobmod_c6e7383dc013_e5400 (the lighting job GL1 was made from): GL1 off%c", 10);
         return;
