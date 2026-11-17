@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.45";
+        public const string Version = "0.1.46";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -2773,6 +2773,8 @@ namespace Infamous2Launcher
             psi.EnvironmentVariables["PATH"] = Prereqs.ChildPath(prereqs);
             Prereqs.SetToolEnv(psi, prereqs);
             psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
+            // Non-Latin Windows locales (e.g. GBK): print chars the console code page lacks (the TM sign in the game title) as ? instead of crashing (#32).
+            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("PYTHONIOENCODING"))) psi.EnvironmentVariables["PYTHONIOENCODING"] = ":replace";
             psi.EnvironmentVariables["NINJA_STATUS"] = "[%f/%t] ";
             if (toolkitOk && s.Id == "setup") psi.EnvironmentVariables["IF2_TOOLKIT_DOWNLOAD"] = "yes";
             try
@@ -3823,6 +3825,8 @@ namespace Infamous2Launcher
             psi.EnvironmentVariables["PATH"] = Prereqs.ChildPath(prereqs);
             Prereqs.SetToolEnv(psi, prereqs);
             psi.EnvironmentVariables["PYTHONUNBUFFERED"] = "1";
+            // Non-Latin Windows locales (e.g. GBK): print chars the console code page lacks (the TM sign in the game title) as ? instead of crashing (#32).
+            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("PYTHONIOENCODING"))) psi.EnvironmentVariables["PYTHONIOENCODING"] = ":replace";
             psi.EnvironmentVariables["NINJA_STATUS"] = "[%f/%t] ";
             if (yes && s.Id == "setup") psi.EnvironmentVariables["IF2_TOOLKIT_DOWNLOAD"] = "yes";
             double w0 = Weight(index) / TotalWeight(), w1 = Weight(index + 1) / TotalWeight();
