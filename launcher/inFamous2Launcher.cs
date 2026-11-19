@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.46";
+        public const string Version = "0.1.47";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -706,7 +706,17 @@ namespace Infamous2Launcher
                 Url = "https://developer.microsoft.com/windows/downloads/windows-sdk/"
             };
             string sdkVer, sdkD3d = NewestSdkD3d12(out sdkVer);
-            if (sdkD3d == null) { sdk.Ok = true; sdk.Found = "(not found separately: Visual Studio's)"; }
+            // Issue #33: with no Windows SDK (or one without its x64 libraries) the link fails at once with
+            // "lld-link: error: could not open 'kernel32.lib'": no SDK is never fine.
+            if (sdkD3d == null)
+                sdk.Note = "Windows SDK not found: the build needs its Direct3D 12 headers and its libraries (kernel32.lib, ...). " +
+                           "Install it here, or in Visual Studio Installer: Modify, Individual components, \"Windows 11 SDK\".";
+            else if (!File.Exists(SdkKernel32(sdkD3d, sdkVer)))
+            {
+                sdk.Found = Path.GetDirectoryName(Path.GetDirectoryName(sdkD3d)) + " (" + sdkVer + ")";
+                sdk.Outdated = true;
+                sdk.Note = "found Windows SDK " + sdkVer + " without its x64 libraries (Lib\\" + sdkVer + "\\um\\x64\\kernel32.lib is missing): install the SDK again";
+            }
             else
             {
                 string h = "";
@@ -855,6 +865,13 @@ namespace Infamous2Launcher
         }
 
         public const int MinClangMajor = 19;
+
+        // <kits root>\Lib\<version>\um\x64\kernel32.lib, from that SDK's <kits root>\Include\<version>\um\d3d12.h.
+        public static string SdkKernel32(string d3d12h, string version)
+        {
+            string root = Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(d3d12h))));
+            return Path.Combine(root, "Lib", version, @"um\x64\kernel32.lib");
+        }
 
         // um\d3d12.h of the newest Windows 10/11 SDK installed (the one vcvars picks), or null.
         static string NewestSdkD3d12(out string version)
@@ -2816,7 +2833,7 @@ namespace Infamous2Launcher
                     foreach (var d in diag) Append("  " + d);
                 }
                 if (first != null) Append("step " + s.Id + " failed; its first error: " + first);
-                string hint = LibsreHint(s.Id);
+                string hint = LibsreHint(s.Id) ?? SdkHint(s.Id);
                 if (hint != null) Append(hint);
                 Finish(false, "Step " + (i + 1) + " of " + Pipeline.Steps.Length + " (" + s.Id + ": " + s.Title + ") failed" +
                               (first != null ? ": " + first : ".") + (hint != null ? "\r\n\r\n" + hint : ""));
@@ -2848,6 +2865,21 @@ namespace Infamous2Launcher
             }
             catch { return null; }
             return "Your " + Ps3Files.OldLibsreHelp + " Then press Build again.";
+        }
+
+        // Issue #33: the linker cannot find Windows' own libraries (kernel32.lib, user32.lib, ...): the Windows SDK is
+        // missing or incomplete, whatever the first error line says.
+        static readonly Regex SdkLibMissing = new Regex(@"(could not open|cannot open( input)? file) '?(kernel32|user32|gdi32|uuid)\.lib",
+                                                        RegexOptions.IgnoreCase);
+        string SdkHint(string stepId)
+        {
+            if (stepId != "build") return null;
+            List<string> lines;
+            lock (qLock) lines = new List<string>(stepLines);
+            if (!lines.Any(l => SdkLibMissing.IsMatch(l))) return null;
+            return "The Windows SDK is missing or incomplete: the linker cannot find Windows' own libraries (kernel32.lib). " +
+                   "Install the Windows 11 SDK (press Install next to \"Windows SDK\" in the tools list, or in Visual Studio Installer: " +
+                   "Modify, Individual components, \"Windows 11 SDK\"), then press Build again; only step 7 runs again.";
         }
 
         string FirstError()
