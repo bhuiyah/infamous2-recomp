@@ -76,7 +76,7 @@ namespace Infamous2Launcher
     static class AppInfo
     {
         // The release this launcher belongs to: tools\make_release.ps1 refuses a tag that does not match it.
-        public const string Version = "0.1.47";
+        public const string Version = "0.1.48";
         public const string Repo = "bhuiyah/infamous2-recomp";
         public const string ApiLatest = "https://api.github.com/repos/" + Repo + "/releases/latest";
         public const string ReleasesPage = "https://github.com/" + Repo + "/releases";
@@ -699,10 +699,12 @@ namespace Infamous2Launcher
             // The Windows SDK the build uses (vcvars picks the newest installed). Its d3d12.h must declare the C
             // binding of Get{CPU,GPU}DescriptorHandleForHeapStart with the RetVal out-parameter; 10.0.19041 and
             // older still have the one-argument form, and the renderer fails to compile ("too many arguments to
-            // function call, expected 1, have 2", issue #18).
+            // function call, expected 1, have 2", issue #18). Issue #36: the renderer also uses
+            // D3D12_FEATURE_D3D12_OPTIONS13 and D3D12_BLEND_ALPHA_FACTOR, first declared in 10.0.22621; with
+            // 10.0.22000 step 7 fails with "use of undeclared identifier 'D3D12_BLEND_ALPHA_FACTOR'".
             var sdk = new Prereq
             {
-                Id = "sdk", Name = "Windows SDK 10.0.20348 or newer", Why = "the Direct3D 12 headers", WingetId = "Microsoft.WindowsSDK.10.0.26100",
+                Id = "sdk", Name = "Windows SDK 10.0.22621 or newer", Why = "the Direct3D 12 headers", WingetId = "Microsoft.WindowsSDK.10.0.26100",
                 Url = "https://developer.microsoft.com/windows/downloads/windows-sdk/"
             };
             string sdkVer, sdkD3d = NewestSdkD3d12(out sdkVer);
@@ -721,13 +723,13 @@ namespace Infamous2Launcher
             {
                 string h = "";
                 try { h = File.ReadAllText(sdkD3d); } catch { }
-                bool retval = h.Length == 0 || Regex.IsMatch(h, @"GetCPUDescriptorHandleForHeapStart\s*\)\s*\(\s*ID3D12DescriptorHeap\s*\*\s*This\s*,\s*D3D12_CPU_DESCRIPTOR_HANDLE\s*\*\s*RetVal");
                 sdk.Found = Path.GetDirectoryName(Path.GetDirectoryName(sdkD3d)) + " (" + sdkVer + ")";
-                if (retval) sdk.Ok = true;
+                if (SdkD3d12HeaderOk(h)) sdk.Ok = true;
                 else
                 {
                     sdk.Outdated = true;
-                    sdk.Note = "found Windows SDK " + sdkVer + "; its Direct3D 12 header is too old for the game's renderer (10.0.20348 or newer is needed)";
+                    sdk.Note = "found Windows SDK " + sdkVer + "; its Direct3D 12 header is too old for the game's renderer (10.0.22621 or newer is needed). " +
+                               "Install the newer SDK here (it can stay next to the old one; the build uses the newest).";
                 }
             }
             list.Add(sdk);
@@ -871,6 +873,16 @@ namespace Infamous2Launcher
         {
             string root = Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(Path.GetDirectoryName(d3d12h))));
             return Path.Combine(root, "Lib", version, @"um\x64\kernel32.lib");
+        }
+
+        // True when this d3d12.h text has everything the renderer uses (an unreadable header counts as fine): the RetVal
+        // C binding of Get*DescriptorHandleForHeapStart (10.0.20348+, issue #18) and OPTIONS13 / ALPHA_FACTOR blend
+        // (10.0.22621+, issue #36).
+        public static bool SdkD3d12HeaderOk(string h)
+        {
+            if (string.IsNullOrEmpty(h)) return true;
+            return Regex.IsMatch(h, @"GetCPUDescriptorHandleForHeapStart\s*\)\s*\(\s*ID3D12DescriptorHeap\s*\*\s*This\s*,\s*D3D12_CPU_DESCRIPTOR_HANDLE\s*\*\s*RetVal")
+                && h.Contains("D3D12_FEATURE_D3D12_OPTIONS13") && h.Contains("D3D12_BLEND_ALPHA_FACTOR");
         }
 
         // um\d3d12.h of the newest Windows 10/11 SDK installed (the one vcvars picks), or null.
@@ -2871,11 +2883,17 @@ namespace Infamous2Launcher
         // missing or incomplete, whatever the first error line says.
         static readonly Regex SdkLibMissing = new Regex(@"(could not open|cannot open( input)? file) '?(kernel32|user32|gdi32|uuid)\.lib",
                                                         RegexOptions.IgnoreCase);
+        // Issue #36: an older SDK's d3d12.h lacks what the renderer uses.
+        static readonly Regex SdkD3d12Old = new Regex(@"undeclared identifier '(D3D12_|ID3D12)|too many arguments to function call, expected 1, have 2");
         string SdkHint(string stepId)
         {
             if (stepId != "build") return null;
             List<string> lines;
             lock (qLock) lines = new List<string>(stepLines);
+            if (lines.Any(l => SdkD3d12Old.IsMatch(l)))
+                return "Your Windows SDK is too old for the game's renderer (its Direct3D 12 header lacks newer names). " +
+                       "Install Windows SDK 10.0.22621 or newer (press Install next to \"Windows SDK\" in the tools list, or in Visual Studio Installer: " +
+                       "Modify, Individual components, the newest \"Windows 11 SDK\"), then press Build again; only step 7 runs again.";
             if (!lines.Any(l => SdkLibMissing.IsMatch(l))) return null;
             return "The Windows SDK is missing or incomplete: the linker cannot find Windows' own libraries (kernel32.lib). " +
                    "Install the Windows 11 SDK (press Install next to \"Windows SDK\" in the tools list, or in Visual Studio Installer: " +
